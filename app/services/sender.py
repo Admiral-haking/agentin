@@ -18,7 +18,18 @@ class Sender:
         self.base_url = settings.DIRECTAM_BASE_URL.rstrip("/")
         self.send_prefix = settings.DIRECTAM_SEND_PREFIX.strip("/")
         self.api_token = settings.SERVICE_API_KEY
-        self.headers = {"api-key": self.api_token, "api_token": self.api_token}
+        self.headers = self._auth_headers()
+
+    def _auth_headers(self) -> dict[str, str]:
+        token = self.api_token
+        return {
+            "api-key": token,
+            "api_token": token,
+            "api-token": token,
+            "x-api-key": token,
+            "x-api-token": token,
+            "authorization": f"Bearer {token}",
+        }
 
     def _send_path(self, path: str) -> str:
         if not self.send_prefix:

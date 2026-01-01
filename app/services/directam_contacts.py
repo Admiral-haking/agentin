@@ -41,9 +41,20 @@ class DirectamContactsClient:
         self.path = settings.DIRECTAM_CONTACTS_PATH
         self.method = settings.DIRECTAM_CONTACTS_METHOD.upper()
         self.api_token = settings.SERVICE_API_KEY
-        self.headers = {"api-key": self.api_token, "api_token": self.api_token}
+        self.headers = self._auth_headers()
         self.body = settings.DIRECTAM_CONTACTS_BODY
         self.data_path = settings.DIRECTAM_CONTACTS_DATA_PATH
+
+    def _auth_headers(self) -> dict[str, str]:
+        token = self.api_token
+        return {
+            "api-key": token,
+            "api_token": token,
+            "api-token": token,
+            "x-api-key": token,
+            "x-api-token": token,
+            "authorization": f"Bearer {token}",
+        }
 
     def _validate(self) -> None:
         if not self.base_url:
