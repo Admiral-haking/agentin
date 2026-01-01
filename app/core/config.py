@@ -22,6 +22,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("DIRECTAM_BASE_URL", "SERVICE_BASE_URL")
     )
     SERVICE_API_KEY: str
+    DIRECTAM_SEND_PREFIX: str = ""
     DIRECTAM_CONTACTS_PATH: str | None = None
     DIRECTAM_CONTACTS_METHOD: str = "GET"
     DIRECTAM_CONTACTS_BODY: str | None = None

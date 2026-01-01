@@ -16,13 +16,23 @@ class SenderError(Exception):
 class Sender:
     def __init__(self) -> None:
         self.base_url = settings.DIRECTAM_BASE_URL.rstrip("/")
+        self.send_prefix = settings.DIRECTAM_SEND_PREFIX.strip("/")
         self.api_token = settings.SERVICE_API_KEY
         self.headers = {"api-key": self.api_token, "api_token": self.api_token}
+
+    def _send_path(self, path: str) -> str:
+        if not self.send_prefix:
+            return path
+        return f"/{self.send_prefix}/{path.lstrip('/')}"
 
     async def send_text(self, receiver_id: str, text: str) -> dict:
         return await self._post(
             "/send/text",
-            {"receiver_id": receiver_id, "text": text},
+            {
+                "receiver_id": receiver_id,
+                "id_receiver": receiver_id,
+                "text": text,
+            },
         )
 
     async def send_button_text(
@@ -30,6 +40,7 @@ class Sender:
     ) -> dict:
         payload = {
             "receiver_id": receiver_id,
+            "id_receiver": receiver_id,
             "text": text,
             "buttons": [button.model_dump(exclude_none=True) for button in buttons],
         }
@@ -40,6 +51,7 @@ class Sender:
     ) -> dict:
         payload = {
             "receiver_id": receiver_id,
+            "id_receiver": receiver_id,
             "text": text,
             "quick_replies": [
                 reply.model_dump(exclude_none=True) for reply in quick_replies
@@ -52,6 +64,7 @@ class Sender:
     ) -> dict:
         payload = {
             "receiver_id": receiver_id,
+            "id_receiver": receiver_id,
             "elements": [element.model_dump(exclude_none=True) for element in elements],
         }
         return await self._post("/send/generic-template", payload)
@@ -59,19 +72,34 @@ class Sender:
     async def send_photo(self, receiver_id: str, image_url: str) -> dict:
         return await self._post(
             "/send/photo",
-            {"receiver_id": receiver_id, "image_url": image_url},
+            {
+                "receiver_id": receiver_id,
+                "id_receiver": receiver_id,
+                "image_url": image_url,
+                "url_image": image_url,
+            },
         )
 
     async def send_video(self, receiver_id: str, video_url: str) -> dict:
         return await self._post(
             "/send/video",
-            {"receiver_id": receiver_id, "video_url": video_url},
+            {
+                "receiver_id": receiver_id,
+                "id_receiver": receiver_id,
+                "video_url": video_url,
+                "url_video": video_url,
+            },
         )
 
     async def send_audio(self, receiver_id: str, audio_url: str) -> dict:
         return await self._post(
             "/send/audio",
-            {"receiver_id": receiver_id, "audio_url": audio_url},
+            {
+                "receiver_id": receiver_id,
+                "id_receiver": receiver_id,
+                "audio_url": audio_url,
+                "url_audio": audio_url,
+            },
         )
 
     def _with_api_token(self, payload: dict) -> dict:
@@ -85,7 +113,7 @@ class Sender:
             raise SenderError("DIRECTAM_BASE_URL is not configured")
         if not self.api_token:
             raise SenderError("SERVICE_API_KEY is not configured")
-        url = f"{self.base_url}{path}"
+        url = f"{self.base_url}{self._send_path(path)}"
         payload = self._with_api_token(payload)
         params = {"api_token": self.api_token}
         try:
