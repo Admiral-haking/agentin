@@ -75,9 +75,10 @@ class Sender:
         )
 
     def _with_api_token(self, payload: dict) -> dict:
-        if "api_token" in payload:
-            return payload
-        return {**payload, "api_token": self.api_token}
+        data = dict(payload)
+        if not data.get("api_token"):
+            data["api_token"] = self.api_token
+        return data
 
     async def _post(self, path: str, payload: dict) -> dict:
         if not self.base_url:
@@ -86,9 +87,15 @@ class Sender:
             raise SenderError("SERVICE_API_KEY is not configured")
         url = f"{self.base_url}{path}"
         payload = self._with_api_token(payload)
+        params = {"api_token": self.api_token}
         try:
             async with httpx.AsyncClient(timeout=settings.REQUEST_TIMEOUT_SEC) as client:
-                response = await client.post(url, json=payload, headers=self.headers)
+                response = await client.post(
+                    url,
+                    json=payload,
+                    headers=self.headers,
+                    params=params,
+                )
         except httpx.HTTPError as exc:
             logger.error("errors", stage="send_http", path=path, error=str(exc))
             raise SenderError(f"Send failed: {exc}") from exc
