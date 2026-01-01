@@ -1,0 +1,3 @@
+# Import contacts from a local file every hour at minute 15.
+# Update the --path/--format to match your file location.
+15 * * * * root cd /opt/agentin && PYTHONPATH=/opt/agentin /opt/agentin/.venv/bin/python -m app.admin.import_contacts --path /opt/agentin/import/contacts.json --format json --update-existing >> /var/log/agentin-contacts-import.log 2>&1

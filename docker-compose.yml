@@ -1,0 +1,27 @@
+version: "3.9"
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: dm_bot
+      POSTGRES_USER: dm_bot
+      POSTGRES_PASSWORD: dm_bot
+    ports:
+      - "5433:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+asyncpg://dm_bot:dm_bot@db:5432/dm_bot
+      SERVICE_BASE_URL: https://api.example.com
+      SERVICE_API_KEY: YOUR_API_KEY
+      JWT_SECRET_KEY: YOUR_JWT_SECRET
+      ADMIN_UI_ORIGINS: http://localhost:5173
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+
+volumes:
+  db_data:

@@ -1,0 +1,20 @@
+[Unit]
+Description=Agentin API
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=agentin
+Group=agentin
+WorkingDirectory=/opt/agentin
+EnvironmentFile=/opt/agentin/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/agentin/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=10
+KillSignal=SIGINT
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,146 @@
+@font-face {
+  font-family: "Vazirmatn";
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url("/fonts/vazirmatn/vazirmatn-300.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Vazirmatn";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("/fonts/vazirmatn/vazirmatn-400.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Vazirmatn";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("/fonts/vazirmatn/vazirmatn-500.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Vazirmatn";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("/fonts/vazirmatn/vazirmatn-600.woff2") format("woff2");
+}
+
+@font-face {
+  font-family: "Vazirmatn";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("/fonts/vazirmatn/vazirmatn-700.woff2") format("woff2");
+}
+
+:root {
+  --ink-900: #121621;
+  --ink-700: #2a2f3a;
+  --surface-0: #f3f1eb;
+  --surface-1: #ffffff;
+  --accent-500: #0f8b8d;
+  --accent-300: #5bc6c2;
+  --accent-warm: #ff8a5b;
+  --ring: rgba(15, 139, 141, 0.25);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Vazirmatn", "IBM Plex Sans", sans-serif;
+  color: var(--ink-900);
+  background-color: var(--surface-0);
+  background-image:
+    radial-gradient(1100px 520px at 12% -10%, rgba(15, 139, 141, 0.18), transparent 60%),
+    radial-gradient(900px 420px at 96% 0%, rgba(255, 138, 91, 0.16), transparent 55%),
+    repeating-linear-gradient(90deg, rgba(15, 139, 141, 0.06) 0, rgba(15, 139, 141, 0.06) 1px, transparent 1px, transparent 28px),
+    repeating-linear-gradient(180deg, rgba(15, 139, 141, 0.05) 0, rgba(15, 139, 141, 0.05) 1px, transparent 1px, transparent 28px);
+  min-height: 100vh;
+  line-height: 1.7;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  direction: rtl;
+  text-align: right;
+}
+
+input,
+textarea,
+select,
+button {
+  font-family: "Vazirmatn", "IBM Plex Sans", sans-serif;
+}
+
+input[type="url"],
+input[type="email"],
+input[type="tel"],
+input[type="number"],
+input[type="password"],
+input[type="search"] {
+  direction: ltr;
+  text-align: left;
+}
+
+pre,
+code {
+  direction: ltr;
+  text-align: left;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+.RaLayout-content {
+  animation: page-in 280ms ease-out;
+}
+
+.RaDatagrid-root tbody tr {
+  animation: row-in 240ms ease both;
+}
+
+.RaDatagrid-root tbody tr:nth-child(1) { animation-delay: 40ms; }
+.RaDatagrid-root tbody tr:nth-child(2) { animation-delay: 80ms; }
+.RaDatagrid-root tbody tr:nth-child(3) { animation-delay: 120ms; }
+.RaDatagrid-root tbody tr:nth-child(4) { animation-delay: 160ms; }
+.RaDatagrid-root tbody tr:nth-child(5) { animation-delay: 200ms; }
+.RaDatagrid-root tbody tr:nth-child(6) { animation-delay: 240ms; }
+
+@keyframes page-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes row-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.rtl-text {
+  direction: rtl;
+  text-align: right;
+}
+
+.ltr-text {
+  direction: ltr;
+  text-align: left;
+}

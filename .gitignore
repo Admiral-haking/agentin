@@ -1,0 +1,10 @@
+.venv/
+.env
+.env.*
+admin-ui/.env
+admin-ui/.env.*
+admin-ui/node_modules/
+admin-ui/dist/
+__pycache__/
+*.pyc
+uvicorn.log
