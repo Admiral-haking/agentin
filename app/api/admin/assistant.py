@@ -740,6 +740,7 @@ async def approve_action(
     if not action:
         raise HTTPException(status_code=404, detail="Action not found")
     if action.status != "pending":
+        await session.refresh(action)
         return AssistantActionOut.model_validate(action)
 
     action.status = "approved"
@@ -754,12 +755,14 @@ async def approve_action(
         action.status = "failed"
         action.error = str(exc)
         await session.commit()
+        await session.refresh(action)
         return AssistantActionOut.model_validate(action)
 
     action.status = "executed"
     action.result_json = result
     action.executed_at = utc_now()
     await session.commit()
+    await session.refresh(action)
     return AssistantActionOut.model_validate(action)
 
 
@@ -773,11 +776,13 @@ async def reject_action(
     if not action:
         raise HTTPException(status_code=404, detail="Action not found")
     if action.status != "pending":
+        await session.refresh(action)
         return AssistantActionOut.model_validate(action)
     action.status = "rejected"
     action.approved_by = admin.id
     action.approved_at = utc_now()
     await session.commit()
+    await session.refresh(action)
     return AssistantActionOut.model_validate(action)
 
 
