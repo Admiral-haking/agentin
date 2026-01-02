@@ -266,6 +266,25 @@ def _iter_offer_objects(value: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _extract_model_id(value: Any) -> str | None:
+    if not value:
+        return None
+    if isinstance(value, str):
+        return value.strip() or None
+    if isinstance(value, dict):
+        for key in ("sku", "mpn", "model", "name", "value"):
+            candidate = _extract_model_id(value.get(key))
+            if candidate:
+                return candidate
+        return None
+    if isinstance(value, list):
+        for entry in value:
+            candidate = _extract_model_id(entry)
+            if candidate:
+                return candidate
+    return None
+
+
 def _normalize_page_url(value: str) -> str:
     parsed = urlparse(value.strip())
     parsed = parsed._replace(query="", fragment="")
@@ -418,6 +437,7 @@ async def _scrape_product(
         images = _normalize_images(images, url)
         price: int | None = None
         availability: ProductAvailability | None = None
+        model_id: str | None = None
         json_ld = _extract_product_from_json_ld(html_text)
         if json_ld:
             title = json_ld.get("name") or json_ld.get("headline") or title
@@ -427,6 +447,11 @@ async def _scrape_product(
                 url,
             )
             images = _merge_image_lists(images, json_images) or []
+            model_id = _extract_model_id(
+                json_ld.get("sku")
+                or json_ld.get("mpn")
+                or json_ld.get("model")
+            )
 
             offers = json_ld.get("offers")
             for offer in _iter_offer_objects(offers):
@@ -460,6 +485,7 @@ async def _scrape_product(
             "images": images,
             "price": price,
             "availability": availability,
+            "model_id": model_id,
         }
 
 
@@ -653,6 +679,7 @@ async def run_product_sync(run_id: int | None = None) -> None:
                     images = result.get("images")
                     scraped_price = result.get("price")
                     scraped_availability = result.get("availability")
+                    scraped_model = result.get("model_id")
 
                     changed = False
                     if title and title != product.title:
@@ -675,6 +702,13 @@ async def run_product_sync(run_id: int | None = None) -> None:
                     ):
                         product.availability = scraped_availability
                         changed = True
+                    if scraped_model and not product.product_id:
+                        existing = await session.execute(
+                            select(Product.id).where(Product.product_id == scraped_model)
+                        )
+                        if existing.scalars().first() is None:
+                            product.product_id = scraped_model
+                            changed = True
                     flags = _merge_flags(product.source_flags, {"scraped": True})
                     if flags != (product.source_flags or {}):
                         product.source_flags = flags
