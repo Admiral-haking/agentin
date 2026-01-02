@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import json
 import re
 import time
 import xml.etree.ElementTree as ET
@@ -54,6 +55,11 @@ class MergedProduct:
 
 
 _CACHE: dict[str, tuple[float, Any]] = {}
+_JSON_LD_RE = re.compile(
+    r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
+    re.IGNORECASE | re.DOTALL,
+)
+
 class _ProductHTMLParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__()
@@ -109,6 +115,91 @@ def _cache_get(key: str, ttl: int) -> Any | None:
 
 def _cache_set(key: str, data: Any) -> None:
     _CACHE[key] = (time.monotonic(), data)
+
+
+def _iter_json_ld_objects(raw: Any) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    if isinstance(raw, dict):
+        if "@graph" in raw and isinstance(raw["@graph"], list):
+            for entry in raw["@graph"]:
+                if isinstance(entry, dict):
+                    items.append(entry)
+        else:
+            items.append(raw)
+    elif isinstance(raw, list):
+        for entry in raw:
+            if isinstance(entry, dict):
+                items.append(entry)
+    return items
+
+
+def _extract_product_from_json_ld(html_text: str) -> dict[str, Any] | None:
+    for payload in _JSON_LD_RE.findall(html_text):
+        cleaned = html.unescape(payload.strip())
+        try:
+            data = json.loads(cleaned)
+        except json.JSONDecodeError:
+            continue
+        for entry in _iter_json_ld_objects(data):
+            raw_type = entry.get("@type")
+            types = [raw_type] if isinstance(raw_type, str) else raw_type or []
+            if isinstance(types, str):
+                types = [types]
+            if any(str(item).lower() == "product" for item in types):
+                return entry
+    return None
+
+
+def _normalize_schema_availability(value: Any) -> ProductAvailability | None:
+    if not value:
+        return None
+    if isinstance(value, str):
+        lowered = value.lower()
+        if "instock" in lowered:
+            return ProductAvailability.instock
+        if "outofstock" in lowered:
+            return ProductAvailability.outofstock
+    return None
+
+
+def _normalize_images(value: Any) -> list[str]:
+    items: list[str] = []
+    if isinstance(value, str):
+        items.append(value)
+    elif isinstance(value, list):
+        for entry in value:
+            if isinstance(entry, str):
+                items.append(entry)
+            elif isinstance(entry, dict):
+                url = entry.get("url") or entry.get("@id")
+                if isinstance(url, str):
+                    items.append(url)
+    elif isinstance(value, dict):
+        url = value.get("url") or value.get("@id")
+        if isinstance(url, str):
+            items.append(url)
+    return [item.strip() for item in items if item and item.strip()]
+
+
+def _merge_image_lists(
+    existing: list[str] | None, incoming: list[str] | None
+) -> list[str] | None:
+    merged: list[str] = []
+    for entry in (existing or []) + (incoming or []):
+        entry = entry.strip() if entry else ""
+        if entry and entry not in merged:
+            merged.append(entry)
+    return merged or None
+
+
+def _iter_offer_objects(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, dict):
+        if value.get("@type") == "AggregateOffer" and value.get("offers"):
+            return _iter_offer_objects(value.get("offers"))
+        return [value]
+    if isinstance(value, list):
+        return [entry for entry in value if isinstance(entry, dict)]
+    return []
 
 
 def _normalize_page_url(value: str) -> str:
@@ -259,8 +350,50 @@ async def _scrape_product(
         parser.feed(html_text)
         title = parser.title
         description = parser.description
-        images = parser.images or None
-        return {"title": title, "description": description, "images": images}
+        images = parser.images or []
+        images = _normalize_images(images)
+        price: int | None = None
+        availability: ProductAvailability | None = None
+        json_ld = _extract_product_from_json_ld(html_text)
+        if json_ld:
+            title = json_ld.get("name") or json_ld.get("headline") or title
+            description = json_ld.get("description") or description
+            json_images = _normalize_images(json_ld.get("image") or json_ld.get("images"))
+            images = _merge_image_lists(images, json_images) or []
+
+            offers = json_ld.get("offers")
+            for offer in _iter_offer_objects(offers):
+                if price is None:
+                    price = _parse_price(
+                        offer.get("price")
+                        or offer.get("lowPrice")
+                        or offer.get("highPrice")
+                    )
+                if price is None:
+                    price_spec = offer.get("priceSpecification")
+                    if isinstance(price_spec, dict):
+                        price = _parse_price(price_spec.get("price"))
+                    elif isinstance(price_spec, list):
+                        for spec in price_spec:
+                            if isinstance(spec, dict):
+                                price = _parse_price(spec.get("price"))
+                                if price is not None:
+                                    break
+                if availability is None:
+                    availability = _normalize_schema_availability(
+                        offer.get("availability")
+                    )
+                if price is not None and availability is not None:
+                    break
+
+        images = _merge_image_lists(images, None)
+        return {
+            "title": title,
+            "description": description,
+            "images": images,
+            "price": price,
+            "availability": availability,
+        }
 
 
 def _merge_flags(
@@ -451,6 +584,8 @@ async def run_product_sync(run_id: int | None = None) -> None:
                     title = result.get("title")
                     description = result.get("description")
                     images = result.get("images")
+                    scraped_price = result.get("price")
+                    scraped_availability = result.get("availability")
 
                     changed = False
                     if title and title != product.title:
@@ -459,8 +594,19 @@ async def run_product_sync(run_id: int | None = None) -> None:
                     if description and description != product.description:
                         product.description = description
                         changed = True
-                    if images and images != product.images:
-                        product.images = images
+                    if images:
+                        merged_images = _merge_image_lists(product.images, images)
+                        if merged_images != product.images:
+                            product.images = merged_images
+                            changed = True
+                    if scraped_price is not None and product.price is None:
+                        product.price = scraped_price
+                        changed = True
+                    if (
+                        scraped_availability is not None
+                        and product.availability == ProductAvailability.unknown
+                    ):
+                        product.availability = scraped_availability
                         changed = True
                     flags = _merge_flags(product.source_flags, {"scraped": True})
                     if flags != (product.source_flags or {}):

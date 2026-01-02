@@ -27,6 +27,7 @@ from app.services.guardrails import (
     build_rule_based_plan,
     fallback_for_message_type,
     fallback_llm_text,
+    needs_product_details,
     plan_outbound,
     post_process,
 )
@@ -36,7 +37,9 @@ from app.services.instagram_user_client import (
 )
 from app.services.llm_clients import LLMError, generate_reply
 from app.services.llm_router import choose_provider
+from app.services.order_flow import handle_order_flow
 from app.services.product_matcher import match_products
+from app.services.product_presenter import build_product_plan, wants_product_list
 from app.services.prompts import load_prompt
 from app.services.sender import Sender, SenderError
 from app.utils.time import parse_timestamp, utc_now
@@ -225,6 +228,37 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 <= 1
             )
 
+            order_plan = await handle_order_flow(session, user, normalized.text)
+            if order_plan:
+                await send_plan_and_store(
+                    session, conversation.id, normalized.sender_id, order_plan
+                )
+                return
+
+            matched_products = await match_products(
+                session,
+                normalized.text,
+                limit=settings.PRODUCT_MATCH_LIMIT,
+            )
+            if wants_product_list(normalized.text) and not matched_products:
+                result = await session.execute(
+                    select(Product)
+                    .order_by(Product.updated_at.desc())
+                    .limit(settings.PRODUCT_MATCH_LIMIT)
+                )
+                matched_products = list(result.scalars().all())
+
+            if matched_products and (
+                wants_product_list(normalized.text)
+                or needs_product_details(normalized.text)
+            ):
+                product_plan = build_product_plan(normalized.text, matched_products)
+                if product_plan:
+                    await send_plan_and_store(
+                        session, conversation.id, normalized.sender_id, product_plan
+                    )
+                    return
+
             rule_plan = build_rule_based_plan(
                 normalized.message_type,
                 normalized.text,
@@ -246,11 +280,6 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     return
 
             campaigns = await get_active_campaigns(session)
-            matched_products = await match_products(
-                session,
-                normalized.text,
-                limit=settings.PRODUCT_MATCH_LIMIT,
-            )
             llm_messages = build_llm_messages(
                 history, bot_settings, normalized, user, matched_products
             )

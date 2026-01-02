@@ -101,6 +101,8 @@ Enable the catalog feature and set sync sources in `.env`:
 PRODUCTS_FEATURE_ENABLED=true
 TOROB_PRODUCTS_URL=https://ghlbedovom.com/api/torob/products
 SITEMAP_URL=https://ghlbedovom.com/sitemap.xml
+PRODUCT_SCRAPE_ENABLED=true
+ORDER_FORM_ENABLED=true
 ```
 
 Run a sync manually (admin only):
@@ -120,6 +122,11 @@ Schedule with cron (example every 6 hours):
 ```
 0 */6 * * * cd /opt/agentin && /opt/agentin/.venv/bin/python -m app.admin.sync_products >> /var/log/agentin_product_sync.log 2>&1
 ```
+
+Bot behavior:
+- If a user asks for products or prices and there are matches, the bot sends a product carousel/button before calling the LLM.
+- Matched products are also injected into the AI context so the model can answer with accurate prices and links.
+- Order capture can be enabled with `ORDER_FORM_ENABLED=true`.
 
 ## Docker (minimal)
 

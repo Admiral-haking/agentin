@@ -76,6 +76,7 @@ class Settings(BaseSettings):
     PRODUCT_SCRAPE_MAX: int = 50
     PRODUCT_MATCH_LIMIT: int = 5
     PRODUCT_MATCH_CANDIDATES: int = 50
+    ORDER_FORM_ENABLED: bool = True
 
 
 settings = Settings()

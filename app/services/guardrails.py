@@ -95,7 +95,7 @@ ANGRY_KEYWORDS = {
     "نیومد",
 }
 
-QUICK_REPLY_MENU = ["خرید", "پشتیبانی", "آدرس شعب"]
+QUICK_REPLY_MENU = ["خرید", "ثبت سفارش", "مشاهده محصولات", "پشتیبانی", "آدرس شعب"]
 
 
 def fallback_for_message_type(message_type: str) -> str:
