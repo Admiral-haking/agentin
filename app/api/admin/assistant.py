@@ -740,7 +740,7 @@ async def approve_action(
     if not action:
         raise HTTPException(status_code=404, detail="Action not found")
     if action.status != "pending":
-        raise HTTPException(status_code=400, detail="Action is not pending")
+        return AssistantActionOut.model_validate(action)
 
     action.status = "approved"
     action.approved_by = admin.id
@@ -773,7 +773,7 @@ async def reject_action(
     if not action:
         raise HTTPException(status_code=404, detail="Action not found")
     if action.status != "pending":
-        raise HTTPException(status_code=400, detail="Action is not pending")
+        return AssistantActionOut.model_validate(action)
     action.status = "rejected"
     action.approved_by = admin.id
     action.approved_at = utc_now()
