@@ -10,6 +10,7 @@ from app.models.conversation import Conversation
 from app.models.faq import Faq
 from app.models.message import Message
 from app.models.product import Product
+from app.models.product_sync_run import ProductSyncRun
 from app.models.usage import Usage
 from app.models.user import User
 
@@ -29,6 +30,7 @@ __all__ = [
     "Faq",
     "Message",
     "Product",
+    "ProductSyncRun",
     "Usage",
     "User",
 ]

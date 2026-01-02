@@ -9,7 +9,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import AsyncSessionLocal
-from app.models import BotSettings, Campaign, Conversation, Faq, Message, Usage, User
+from app.models import (
+    BotSettings,
+    Campaign,
+    Conversation,
+    Faq,
+    Message,
+    Product,
+    Usage,
+    User,
+)
 from app.schemas.send import OutboundPlan
 from app.schemas.webhook import NormalizedMessage
 from app.knowledge.store import get_store_knowledge_text
@@ -27,6 +36,7 @@ from app.services.instagram_user_client import (
 )
 from app.services.llm_clients import LLMError, generate_reply
 from app.services.llm_router import choose_provider
+from app.services.product_matcher import match_products
 from app.services.prompts import load_prompt
 from app.services.sender import Sender, SenderError
 from app.utils.time import parse_timestamp, utc_now
@@ -236,7 +246,14 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     return
 
             campaigns = await get_active_campaigns(session)
-            llm_messages = build_llm_messages(history, bot_settings, normalized, user)
+            matched_products = await match_products(
+                session,
+                normalized.text,
+                limit=settings.PRODUCT_MATCH_LIMIT,
+            )
+            llm_messages = build_llm_messages(
+                history, bot_settings, normalized, user, matched_products
+            )
             llm_messages = inject_campaigns_and_faqs(llm_messages, campaigns, faqs)
 
             provider = choose_provider(
@@ -477,6 +494,7 @@ def build_llm_messages(
     bot_settings: BotSettings | None,
     message: NormalizedMessage,
     user: User,
+    products: list[Product] | None = None,
 ) -> list[dict[str, str]]:
     base_prompt = bot_settings.system_prompt if bot_settings else load_prompt("system.txt")
     store_knowledge = get_store_knowledge_text()
@@ -506,6 +524,32 @@ def build_llm_messages(
                 "content": f"User profile: {', '.join(profile_bits)}",
             }
         )
+
+    if products:
+        product_lines: list[str] = []
+        for product in products:
+            title = product.title or product.slug or "بدون عنوان"
+            price = str(product.price) if product.price is not None else "نامشخص"
+            old_price = (
+                str(product.old_price) if product.old_price is not None else None
+            )
+            availability = product.availability.value
+            parts = [title, f"قیمت: {price}"]
+            if old_price:
+                parts.append(f"قبل: {old_price}")
+            parts.append(f"موجودی: {availability}")
+            if product.page_url:
+                parts.append(f"لینک: {product.page_url}")
+            product_lines.append(" | ".join(parts))
+        product_context = (
+            "[PRODUCTS]\n"
+            + "\n".join(f"- {line}" for line in product_lines)
+            + "\n"
+            "Rules:\n"
+            "- فقط از قیمت‌های بالا استفاده کن و قیمت جدید نساز.\n"
+            "- اگر قیمت نامشخص بود، همین را اعلام کن و از کاربر جزئیات بپرس."
+        )
+        messages.append({"role": "system", "content": product_context})
 
     for item in history:
         if item.role not in {"user", "assistant"}:

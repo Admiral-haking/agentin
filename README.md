@@ -93,6 +93,34 @@ python -m app.admin.bootstrap --email admin@example.com --password 'YOUR_STRONG_
 
 If `--password` is omitted, the script will prompt securely.
 
+## Product sync
+
+Enable the catalog feature and set sync sources in `.env`:
+
+```
+PRODUCTS_FEATURE_ENABLED=true
+TOROB_PRODUCTS_URL=https://ghlbedovom.com/api/torob/products
+SITEMAP_URL=https://ghlbedovom.com/sitemap.xml
+```
+
+Run a sync manually (admin only):
+
+```
+POST /admin/products/sync
+```
+
+Or run it from the server:
+
+```
+python -m app.admin.sync_products
+```
+
+Schedule with cron (example every 6 hours):
+
+```
+0 */6 * * * cd /opt/agentin && /opt/agentin/.venv/bin/python -m app.admin.sync_products >> /var/log/agentin_product_sync.log 2>&1
+```
+
 ## Docker (minimal)
 
 ```

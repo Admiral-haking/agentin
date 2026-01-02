@@ -4,6 +4,7 @@ import ForumRoundedIcon from '@mui/icons-material/ForumRounded';
 import MessageRoundedIcon from '@mui/icons-material/MessageRounded';
 import QuizRoundedIcon from '@mui/icons-material/QuizRounded';
 import Inventory2RoundedIcon from '@mui/icons-material/Inventory2Rounded';
+import SyncAltRoundedIcon from '@mui/icons-material/SyncAltRounded';
 import SettingsRoundedIcon from '@mui/icons-material/SettingsRounded';
 import AnalyticsRoundedIcon from '@mui/icons-material/AnalyticsRounded';
 import PeopleAltRoundedIcon from '@mui/icons-material/PeopleAltRounded';
@@ -13,6 +14,7 @@ import { dataProvider } from './dataProvider';
 import { CampaignCreate, CampaignEdit, CampaignList } from './resources/campaigns';
 import { FaqCreate, FaqEdit, FaqList } from './resources/faqs';
 import { ProductCreate, ProductEdit, ProductList } from './resources/products';
+import { ProductSyncRunList } from './resources/productSyncRuns';
 import { ConversationList } from './resources/conversations';
 import { MessageList } from './resources/messages';
 import { SettingsEdit, SettingsList } from './resources/settings';
@@ -67,6 +69,14 @@ export const App = () => (
             create={ProductCreate}
             icon={Inventory2RoundedIcon}
             options={{ label: 'Products' }}
+          />
+        )}
+        {productsEnabled && permissions === 'admin' && (
+          <Resource
+            name="product-sync-runs"
+            list={ProductSyncRunList}
+            icon={SyncAltRoundedIcon}
+            options={{ label: 'همگام‌سازی محصولات' }}
           />
         )}
         <Resource

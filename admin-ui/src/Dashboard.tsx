@@ -1,9 +1,59 @@
 import { Box, Button, Card, CardContent, Chip, Grid, Stack, Typography } from '@mui/material';
 import { Link } from 'react-router-dom';
-import { usePermissions } from 'react-admin';
+import { useDataProvider, usePermissions } from 'react-admin';
+import { useEffect, useState } from 'react';
+import { fetchWithAuth } from './authProvider';
+
+const productsEnabled = (import.meta.env.VITE_PRODUCTS_ENABLED || 'false') === 'true';
+const DEFAULT_API_URL = import.meta.env.DEV
+  ? 'http://localhost:8000'
+  : 'https://api.teamcore.ir';
+const API_URL = import.meta.env.VITE_API_URL || DEFAULT_API_URL;
 
 export const Dashboard = () => {
   const { permissions } = usePermissions();
+  const dataProvider = useDataProvider();
+  const [syncRun, setSyncRun] = useState<any | null>(null);
+  const [syncLoading, setSyncLoading] = useState(false);
+
+  useEffect(() => {
+    if (!productsEnabled) return;
+    setSyncLoading(true);
+    dataProvider
+      .getList('product-sync-runs', {
+        pagination: { page: 1, perPage: 1 },
+        sort: { field: 'started_at', order: 'DESC' },
+        filter: {},
+      })
+      .then(result => {
+        setSyncRun(result.data?.[0] || null);
+      })
+      .catch(() => setSyncRun(null))
+      .finally(() => setSyncLoading(false));
+  }, [dataProvider]);
+
+  const handleSync = async () => {
+    try {
+      await fetchWithAuth(`${API_URL}/admin/products/sync`, { method: 'POST' });
+      setSyncLoading(true);
+      const result = await dataProvider.getList('product-sync-runs', {
+        pagination: { page: 1, perPage: 1 },
+        sort: { field: 'started_at', order: 'DESC' },
+        filter: {},
+      });
+      setSyncRun(result.data?.[0] || null);
+    } finally {
+      setSyncLoading(false);
+    }
+  };
+
+  const syncStatusLabel = syncRun?.status || (syncLoading ? 'running' : 'unknown');
+  const syncStatusColor =
+    syncStatusLabel === 'success'
+      ? 'success'
+      : syncStatusLabel === 'failed'
+        ? 'error'
+        : 'warning';
 
   return (
     <Box sx={{ px: { xs: 2, md: 3 }, py: 2 }}>
@@ -106,6 +156,50 @@ export const Dashboard = () => {
             </CardContent>
           </Card>
         </Grid>
+
+        {productsEnabled && (
+          <Grid item xs={12}>
+            <Card>
+              <CardContent>
+                <Stack spacing={1.5}>
+                  <Stack direction="row" justifyContent="space-between" alignItems="center">
+                    <Typography variant="h6">همگام‌سازی محصولات</Typography>
+                    <Chip
+                      label={syncStatusLabel}
+                      size="small"
+                      color={syncStatusColor}
+                    />
+                  </Stack>
+                  <Typography variant="body2" color="text.secondary">
+                    آخرین وضعیت همگام‌سازی کاتالوگ با وب‌سایت و توروب.
+                  </Typography>
+                  {syncRun ? (
+                    <Typography variant="body2" color="text.secondary">
+                      آخرین اجرا: {syncRun.started_at || '-'} | جدید: {syncRun.created_count ?? 0} | آپدیت: {syncRun.updated_count ?? 0}
+                    </Typography>
+                  ) : (
+                    <Typography variant="body2" color="text.secondary">
+                      هنوز گزارشی ثبت نشده است.
+                    </Typography>
+                  )}
+                  <Stack direction="row" spacing={1}>
+                    <Button
+                      onClick={handleSync}
+                      variant="contained"
+                      color="primary"
+                      disabled={syncLoading}
+                    >
+                      شروع همگام‌سازی
+                    </Button>
+                    <Button component={Link} to="/product-sync-runs" variant="outlined">
+                      مشاهده گزارش‌ها
+                    </Button>
+                  </Stack>
+                </Stack>
+              </CardContent>
+            </Card>
+          </Grid>
+        )}
 
         <Grid item xs={12}>
           <Card>

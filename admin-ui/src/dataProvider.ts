@@ -28,6 +28,14 @@ const dataProvider: DataProvider = {
       const data = await response.json();
       return { data: [data], total: 1 };
     }
+    if (resource === 'product-sync-runs') {
+      const query = buildQuery(params);
+      const response = await fetchWithAuth(
+        `${API_URL}/admin/products/sync-runs?${query}`
+      );
+      const data = await response.json();
+      return { data: data.data, total: data.total };
+    }
     const query = buildQuery(params);
     const response = await fetchWithAuth(`${API_URL}/admin/${resource}?${query}`);
     const data = await response.json();

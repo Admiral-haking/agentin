@@ -65,6 +65,17 @@ class Settings(BaseSettings):
     LOGIN_RATE_LIMIT_MAX_ATTEMPTS: int = 5
 
     PRODUCTS_FEATURE_ENABLED: bool = False
+    TOROB_PRODUCTS_URL: str = "https://ghlbedovom.com/api/torob/products"
+    SITEMAP_URL: str = "https://ghlbedovom.com/sitemap.xml"
+    PRODUCT_SYNC_CACHE_TTL_SEC: int = 300
+    PRODUCT_SYNC_TIMEOUT_SEC: float = 15.0
+    PRODUCT_SYNC_RETRIES: int = 2
+    PRODUCT_SCRAPE_ENABLED: bool = True
+    PRODUCT_SCRAPE_CONCURRENCY: int = 2
+    PRODUCT_SCRAPE_DELAY_SEC: float = 0.3
+    PRODUCT_SCRAPE_MAX: int = 50
+    PRODUCT_MATCH_LIMIT: int = 5
+    PRODUCT_MATCH_CANDIDATES: int = 50
 
 
 settings = Settings()

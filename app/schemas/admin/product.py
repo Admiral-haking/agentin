@@ -5,20 +5,25 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
+from app.models.product import ProductAvailability
+
 
 class ProductBase(BaseModel):
-    title: str
-    category: str | None = None
-    price_range: str | None = None
-    sizes: list[str] | None = None
-    colors: list[str] | None = None
+    product_id: str | None = None
+    slug: str | None = None
+    page_url: str
+    title: str | None = None
+    description: str | None = None
     images: list[str] | None = None
-    link: str | None = None
-    in_stock: bool = True
+    price: int | None = None
+    old_price: int | None = None
+    availability: ProductAvailability = ProductAvailability.unknown
+    lastmod: datetime | None = None
+    source_flags: dict[str, bool] | None = None
 
-    @field_validator("sizes", "colors", "images", mode="before")
+    @field_validator("images", mode="before")
     @classmethod
-    def parse_list(cls, value: Any) -> list[str] | None:
+    def parse_images(cls, value: Any) -> list[str] | None:
         if value is None:
             return None
         if isinstance(value, list):
@@ -33,19 +38,22 @@ class ProductCreate(ProductBase):
 
 
 class ProductUpdate(BaseModel):
+    product_id: str | None = None
+    slug: str | None = None
+    page_url: str | None = None
     title: str | None = None
-    category: str | None = None
-    price_range: str | None = None
-    sizes: list[str] | None = None
-    colors: list[str] | None = None
+    description: str | None = None
     images: list[str] | None = None
-    link: str | None = None
-    in_stock: bool | None = None
+    price: int | None = None
+    old_price: int | None = None
+    availability: ProductAvailability | None = None
+    lastmod: datetime | None = None
+    source_flags: dict[str, bool] | None = None
 
-    @field_validator("sizes", "colors", "images", mode="before")
+    @field_validator("images", mode="before")
     @classmethod
-    def parse_list(cls, value: Any) -> list[str] | None:
-        return ProductBase.parse_list(value)
+    def parse_images(cls, value: Any) -> list[str] | None:
+        return ProductBase.parse_images(value)
 
 
 class ProductOut(ProductBase):
