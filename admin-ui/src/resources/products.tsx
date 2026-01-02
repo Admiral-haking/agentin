@@ -28,6 +28,12 @@ const DEFAULT_API_URL = import.meta.env.DEV
   : 'https://api.teamcore.ir';
 const API_URL = import.meta.env.VITE_API_URL || DEFAULT_API_URL;
 
+const proxyImageUrl = (value?: string | null) => {
+  if (!value) return value;
+  if (value.startsWith(API_URL)) return value;
+  return `${API_URL}/media-proxy?url=${encodeURIComponent(value)}`;
+};
+
 const ProductFilters = [
   <TextInput key="q" label="جستجو" source="q" alwaysOn />,
   <TextInput key="product_id" label="مدل/شناسه توروب" source="product_id" />,
@@ -64,7 +70,7 @@ const parseImages = (value: string) =>
 
 const renderProductImage = (record: any) => {
   const images = Array.isArray(record?.images) ? record.images : [];
-  const url = images.length ? images[0] : null;
+  const url = images.length ? proxyImageUrl(images[0]) : null;
   if (!url) return '-';
   return (
     <img
@@ -76,7 +82,11 @@ const renderProductImage = (record: any) => {
 };
 
 const renderImageCount = (record: any) => {
-  const images = Array.isArray(record?.images) ? record.images : [];
+  const images = Array.isArray(record?.images)
+    ? record.images
+    : typeof record?.images === 'string'
+      ? record.images.split(',').map((item: string) => item.trim()).filter(Boolean)
+      : [];
   return images.length ? `${images.length} تصویر` : '-';
 };
 

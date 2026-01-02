@@ -88,6 +88,7 @@ async def list_products(
             | Product.slug.ilike(q)
             | Product.description.ilike(q)
             | Product.page_url.ilike(q)
+            | Product.product_id.ilike(q)
         )
 
     sort_col = getattr(Product, sort, Product.created_at)

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+from urllib.parse import urlparse
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Request
+from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
+import httpx
 
 from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
@@ -64,6 +66,55 @@ async def webhook(request: Request, background_tasks: BackgroundTasks) -> dict:
 
     background_tasks.add_task(handle_webhook, payload)
     return {"status": "accepted"}
+
+
+@app.api_route("/media-proxy", methods=["GET", "HEAD"])
+async def media_proxy(request: Request, url: str = Query(..., min_length=8)) -> Response:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise HTTPException(status_code=400, detail="Invalid URL scheme")
+    allowed_hosts = {
+        host.strip().lower()
+        for host in settings.MEDIA_PROXY_ALLOWED_HOSTS.split(",")
+        if host.strip()
+    }
+    hostname = parsed.hostname.lower() if parsed.hostname else ""
+    host_allowed = any(
+        hostname == allowed or hostname.endswith(f".{allowed}")
+        for allowed in allowed_hosts
+    )
+    if hostname and not host_allowed:
+        raise HTTPException(status_code=400, detail="Host not allowed")
+
+    timeout = httpx.Timeout(settings.MEDIA_PROXY_TIMEOUT_SEC)
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+        try:
+            method = "HEAD" if request.method == "HEAD" else "GET"
+            upstream = await client.request(method, url)
+            if upstream.status_code in {405, 501} and method == "HEAD":
+                upstream = await client.get(url)
+        except httpx.HTTPError as exc:
+            raise HTTPException(status_code=502, detail=f"Upstream error: {exc}") from exc
+
+    if upstream.status_code >= 400:
+        raise HTTPException(status_code=502, detail="Upstream returned error")
+
+    content_type = upstream.headers.get("content-type", "")
+    if not content_type.startswith("image/"):
+        raise HTTPException(status_code=415, detail="Unsupported media type")
+    content_length = upstream.headers.get("content-length")
+    if content_length and content_length.isdigit():
+        if int(content_length) > settings.MEDIA_PROXY_MAX_BYTES:
+            raise HTTPException(status_code=413, detail="Image too large")
+
+    content = b"" if request.method == "HEAD" else upstream.content
+    if content and len(content) > settings.MEDIA_PROXY_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="Image too large")
+
+    headers = {
+        "Cache-Control": "public, max-age=3600",
+    }
+    return Response(content=content, media_type=content_type, headers=headers)
 
 
 app.include_router(auth_router)

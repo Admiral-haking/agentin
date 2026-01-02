@@ -95,11 +95,33 @@ def normalize_webhook(payload: dict[str, Any]) -> NormalizedMessage:
     if not sender_id or not receiver_id or not message_type:
         raise ValueError("Missing sender, receiver, or message_type")
 
-    message_type = str(message_type).lower().strip()
-    if message_type not in {"text", "media", "audio", "read"}:
+    raw_type = str(message_type).lower().strip()
+    if raw_type in {"image", "photo", "picture", "video", "media"}:
+        message_type = "media"
+    elif raw_type in {"audio", "voice"}:
+        message_type = "audio"
+    elif raw_type in {"text", "quick_reply", "postback", "button", "interactive"}:
+        message_type = "text"
+    elif raw_type == "read":
+        message_type = "read"
+    else:
         raise ValueError("Unsupported message_type")
 
     text = payload.get("text")
+    if not text:
+        payload_value = payload.get("payload")
+        if isinstance(payload_value, str):
+            text = payload_value
+        else:
+            quick_reply = payload.get("quick_reply")
+            if isinstance(quick_reply, dict):
+                text = quick_reply.get("payload") or quick_reply.get("title")
+            postback = payload.get("postback")
+            if not text and isinstance(postback, dict):
+                text = postback.get("payload") or postback.get("title")
+            message_value = payload.get("message")
+            if not text and isinstance(message_value, str):
+                text = message_value
     timestamp = parse_timestamp(payload.get("timestamp"))
 
     is_admin = payload.get("is_admin")
@@ -248,10 +270,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 )
                 matched_products = list(result.scalars().all())
 
-            if matched_products and (
-                wants_product_list(normalized.text)
-                or needs_product_details(normalized.text)
-            ):
+            if matched_products:
                 product_plan = build_product_plan(normalized.text, matched_products)
                 if product_plan:
                     await send_plan_and_store(

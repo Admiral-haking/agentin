@@ -11,3 +11,8 @@ If the user requests a system change, include a JSON block like:
 ```
 Use these action types only: settings.update, faq.create, faq.update, faq.delete, campaign.create, campaign.update, campaign.delete, product.create, product.update, product.delete.
 Do not execute changes; wait for admin approval.
+When proposing product actions:
+- product.create MUST include page_url (required), and should include title/slug/price if available.
+- product.update/delete MUST include id.
+If required fields are missing, ask a short clarifying question instead of proposing an action.
+Categories are not supported yet; if asked about category creation, explain the limitation and ask if they want products or FAQ/campaigns instead.

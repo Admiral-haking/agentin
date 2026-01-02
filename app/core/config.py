@@ -77,6 +77,10 @@ class Settings(BaseSettings):
     PRODUCT_MATCH_LIMIT: int = 5
     PRODUCT_MATCH_CANDIDATES: int = 50
     ORDER_FORM_ENABLED: bool = True
+    MEDIA_PROXY_BASE_URL: str = ""
+    MEDIA_PROXY_ALLOWED_HOSTS: str = "ghlbedovom.com"
+    MEDIA_PROXY_TIMEOUT_SEC: float = 12.0
+    MEDIA_PROXY_MAX_BYTES: int = 10_000_000
 
 
 settings = Settings()

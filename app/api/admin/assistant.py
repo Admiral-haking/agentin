@@ -716,6 +716,31 @@ async def create_action(
 ) -> AssistantActionOut:
     if payload.action_type not in ALLOWED_ACTION_TYPES:
         raise HTTPException(status_code=400, detail="Unsupported action type")
+    if payload.action_type == "product.create":
+        page_url = (payload.payload or {}).get("page_url")
+        if not page_url:
+            raise HTTPException(
+                status_code=400,
+                detail="product.create requires page_url. Provide a product URL.",
+            )
+    if payload.action_type in {"product.update", "product.delete"}:
+        product_id = (payload.payload or {}).get("id")
+        if not product_id:
+            raise HTTPException(
+                status_code=400,
+                detail="product.update/delete requires id.",
+            )
+    if payload.action_type in {"faq.update", "faq.delete"}:
+        faq_id = (payload.payload or {}).get("id")
+        if not faq_id:
+            raise HTTPException(status_code=400, detail="faq.update/delete requires id.")
+    if payload.action_type in {"campaign.update", "campaign.delete"}:
+        campaign_id = (payload.payload or {}).get("id")
+        if not campaign_id:
+            raise HTTPException(
+                status_code=400,
+                detail="campaign.update/delete requires id.",
+            )
     action = AssistantAction(
         conversation_id=payload.conversation_id,
         admin_id=admin.id,
@@ -726,6 +751,7 @@ async def create_action(
     )
     session.add(action)
     await session.commit()
+    await session.refresh(action)
     return AssistantActionOut.model_validate(action)
 
 

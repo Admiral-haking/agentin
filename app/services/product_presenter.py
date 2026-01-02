@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from app.core.config import settings
 from app.models.product import Product
 from app.schemas.send import Button, OutboundPlan, TemplateElement
@@ -41,6 +43,28 @@ def _availability_label(value: str | None) -> str:
     return "نامشخص"
 
 
+def _proxy_image_url(value: str | None) -> str | None:
+    if not value:
+        return None
+    base = settings.MEDIA_PROXY_BASE_URL.strip().rstrip("/")
+    if not base:
+        return value
+    if value.startswith(base):
+        return value
+    encoded = quote(value, safe="")
+    return f"{base}/media-proxy?url={encoded}"
+
+
+def _normalize_images(value: object | None) -> list[str]:
+    if not value:
+        return []
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str):
+        return [value.strip()] if value.strip() else []
+    return []
+
+
 def wants_product_list(text: str | None) -> bool:
     normalized = (text or "").strip().lower()
     if not normalized:
@@ -73,16 +97,22 @@ def build_product_plan(
     if _should_use_carousel(text, len(products)):
         elements: list[TemplateElement] = []
         for product in products[: settings.MAX_TEMPLATE_SLIDES]:
+            images = _normalize_images(product.images)
             title = product.title or product.slug or "محصول"
             price = _format_price(product.price)
-            availability = _availability_label(product.availability.value)
+            availability_value = (
+                product.availability.value
+                if hasattr(product.availability, "value")
+                else str(product.availability)
+            )
+            availability = _availability_label(availability_value)
             subtitle_parts = [f"قیمت: {price}", f"موجودی: {availability}"]
             if product.old_price:
                 subtitle_parts.insert(1, f"قبل: {_format_price(product.old_price)}")
             subtitle = " | ".join(subtitle_parts)
             image_url = None
-            if product.images:
-                image_url = product.images[0]
+            if images:
+                image_url = _proxy_image_url(images[0])
             buttons = []
             if product.page_url:
                 buttons.append(
@@ -100,11 +130,17 @@ def build_product_plan(
             return OutboundPlan(type="generic_template", elements=elements)
 
     product = products[0]
-    if wants_images(text) and product.images and len(product.images) > 1:
+    images = _normalize_images(product.images)
+    if wants_images(text) and images and len(images) > 1:
         elements: list[TemplateElement] = []
         title = product.title or product.slug or "محصول"
         price = _format_price(product.price)
-        availability = _availability_label(product.availability.value)
+        availability_value = (
+            product.availability.value
+            if hasattr(product.availability, "value")
+            else str(product.availability)
+        )
+        availability = _availability_label(availability_value)
         subtitle_parts = [f"قیمت: {price}", f"موجودی: {availability}"]
         if product.old_price:
             subtitle_parts.insert(1, f"قبل: {_format_price(product.old_price)}")
@@ -112,9 +148,10 @@ def build_product_plan(
         buttons = []
         if product.page_url:
             buttons.append(Button(type="web_url", title="مشاهده محصول", url=product.page_url))
-        for idx, image_url in enumerate(
-            product.images[: settings.MAX_TEMPLATE_SLIDES], start=1
+        for idx, raw_url in enumerate(
+            images[: settings.MAX_TEMPLATE_SLIDES], start=1
         ):
+            image_url = _proxy_image_url(raw_url)
             elements.append(
                 TemplateElement(
                     title=f"{title} #{idx}"[:80],
@@ -128,7 +165,12 @@ def build_product_plan(
 
     title = product.title or product.slug or "محصول"
     price = _format_price(product.price)
-    availability = _availability_label(product.availability.value)
+    availability_value = (
+        product.availability.value
+        if hasattr(product.availability, "value")
+        else str(product.availability)
+    )
+    availability = _availability_label(availability_value)
     text_parts = [title, f"قیمت: {price}", f"موجودی: {availability}"]
     if product.old_price:
         text_parts.insert(2, f"قبل: {_format_price(product.old_price)}")

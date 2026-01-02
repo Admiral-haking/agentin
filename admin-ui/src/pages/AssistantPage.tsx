@@ -77,6 +77,9 @@ const extractActionSuggestion = (text: string): AssistantActionSuggestion | null
   }
 };
 
+const formatPayloadDraft = (payload?: Record<string, unknown>) =>
+  JSON.stringify(payload ?? {}, null, 2);
+
 export const AssistantPage = () => {
   const [conversations, setConversations] = useState<AssistantConversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<number | null>(null);
@@ -89,6 +92,8 @@ export const AssistantPage = () => {
   const [error, setError] = useState<string | null>(null);
   const [actionSuggestion, setActionSuggestion] = useState<AssistantActionSuggestion | null>(null);
   const [pendingActions, setPendingActions] = useState<number>(0);
+  const [payloadDraft, setPayloadDraft] = useState('');
+  const [payloadError, setPayloadError] = useState<string | null>(null);
 
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
@@ -309,8 +314,23 @@ export const AssistantPage = () => {
 
   const queueAction = async () => {
     if (!actionSuggestion) return;
+    let parsedPayload: Record<string, unknown> = {};
+    if (payloadDraft.trim()) {
+      try {
+        const parsed = JSON.parse(payloadDraft);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+          setPayloadError('Payload باید یک شیء JSON باشد.');
+          return;
+        }
+        parsedPayload = parsed as Record<string, unknown>;
+      } catch {
+        setPayloadError('JSON نامعتبر است. قالب را بررسی کنید.');
+        return;
+      }
+    }
     setLoading(true);
     setError(null);
+    setPayloadError(null);
     try {
       const response = await fetchWithAuth(`${API_URL}/admin/assistant/actions`, {
         method: 'POST',
@@ -319,7 +339,7 @@ export const AssistantPage = () => {
           conversation_id: activeConversationId || undefined,
           action_type: actionSuggestion.action_type,
           summary: actionSuggestion.summary || 'Assistant proposed change',
-          payload: actionSuggestion.payload || {},
+          payload: parsedPayload,
         }),
       });
       const data = await response.json();
@@ -354,9 +374,14 @@ export const AssistantPage = () => {
   useEffect(() => {
     const lastAssistant = [...messages].reverse().find(msg => msg.role === 'assistant');
     if (lastAssistant?.content) {
-      setActionSuggestion(extractActionSuggestion(lastAssistant.content));
+      const suggestion = extractActionSuggestion(lastAssistant.content);
+      setActionSuggestion(suggestion);
+      setPayloadDraft(formatPayloadDraft(suggestion?.payload));
+      setPayloadError(null);
     } else {
       setActionSuggestion(null);
+      setPayloadDraft('');
+      setPayloadError(null);
     }
   }, [messages]);
 
@@ -492,6 +517,20 @@ export const AssistantPage = () => {
                       {actionSuggestion.summary}
                     </Typography>
                   )}
+                  <TextField
+                    label="جزئیات (Payload JSON)"
+                    value={payloadDraft}
+                    onChange={event => setPayloadDraft(event.target.value)}
+                    multiline
+                    minRows={4}
+                    fullWidth
+                    error={Boolean(payloadError)}
+                    helperText={
+                      payloadError ||
+                      'فیلدهای لازم را تکمیل کنید (مثل page_url یا id).'
+                    }
+                    sx={{ fontFamily: 'monospace' }}
+                  />
                   <Button variant="contained" color="primary" onClick={queueAction} disabled={loading}>
                     در صف تایید بگذار
                   </Button>

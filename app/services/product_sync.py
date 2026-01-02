@@ -63,7 +63,8 @@ _JSON_LD_RE = re.compile(
 def _normalize_image_url(base_url: str, value: str | None) -> str | None:
     if not value:
         return None
-    cleaned = value.strip()
+    cleaned = value.strip().strip('"').strip("'")
+    cleaned = cleaned.rstrip("\\>,)")
     if not cleaned or cleaned.startswith("data:"):
         return None
     if cleaned.startswith("//"):
@@ -246,10 +247,12 @@ def _normalize_images(value: Any, base_url: str | None = None) -> list[str]:
 
 
 def _merge_image_lists(
-    existing: list[str] | None, incoming: list[str] | None
+    existing: Any, incoming: Any
 ) -> list[str] | None:
     merged: list[str] = []
-    for entry in (existing or []) + (incoming or []):
+    existing_items = _normalize_images(existing)
+    incoming_items = _normalize_images(incoming)
+    for entry in existing_items + incoming_items:
         entry = entry.strip() if entry else ""
         if entry and entry not in merged:
             merged.append(entry)
@@ -621,6 +624,11 @@ async def run_product_sync(run_id: int | None = None) -> None:
                     merged_flags = _merge_flags(product.source_flags, entry.source_flags)
                     if merged_flags != (product.source_flags or {}):
                         product.source_flags = merged_flags
+                        changed = True
+
+                    normalized_images = _normalize_images(product.images)
+                    if product.images and normalized_images != product.images:
+                        product.images = normalized_images
                         changed = True
 
                     if entry.should_scrape:
