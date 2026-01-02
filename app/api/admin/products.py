@@ -51,6 +51,12 @@ async def list_products(
             query = query.where(Product.availability.in_(availability))
         else:
             query = query.where(Product.availability == availability)
+    if "product_id" in filters:
+        product_id = filters["product_id"]
+        if isinstance(product_id, list):
+            query = query.where(Product.product_id.in_(product_id))
+        else:
+            query = query.where(Product.product_id == product_id)
     if "min_price" in filters:
         try:
             min_price = int(filters["min_price"])

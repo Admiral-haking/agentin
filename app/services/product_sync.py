@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from html.parser import HTMLParser
 from typing import Any, Iterable
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
 import structlog
@@ -60,19 +60,73 @@ _JSON_LD_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+def _normalize_image_url(base_url: str, value: str | None) -> str | None:
+    if not value:
+        return None
+    cleaned = value.strip()
+    if not cleaned or cleaned.startswith("data:"):
+        return None
+    if cleaned.startswith("//"):
+        cleaned = f"https:{cleaned}"
+    resolved = urljoin(base_url, cleaned)
+    parsed = urlparse(resolved)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    return resolved
+
+
+def _extract_srcset_urls(value: str | None) -> list[str]:
+    if not value:
+        return []
+    urls: list[str] = []
+    for part in value.split(","):
+        url = part.strip().split(" ")[0]
+        if url:
+            urls.append(url)
+    return urls
+
+
 class _ProductHTMLParser(HTMLParser):
-    def __init__(self) -> None:
+    def __init__(self, base_url: str) -> None:
         super().__init__()
+        self.base_url = base_url
         self.title: str | None = None
         self.description: str | None = None
         self.images: list[str] = []
         self._capture_title = False
         self._title_parts: list[str] = []
 
+    def _add_image(self, raw: str | None) -> None:
+        url = _normalize_image_url(self.base_url, raw)
+        if url and url not in self.images:
+            self.images.append(url)
+
+    def _add_srcset(self, raw: str | None) -> None:
+        for candidate in _extract_srcset_urls(raw):
+            self._add_image(candidate)
+
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attrs_dict = {key.lower(): (value or "") for key, value in attrs}
         if tag.lower() == "title":
             self._capture_title = True
+            return
+        if tag.lower() == "img":
+            self._add_image(attrs_dict.get("src"))
+            self._add_image(attrs_dict.get("data-src"))
+            self._add_image(attrs_dict.get("data-original"))
+            self._add_image(attrs_dict.get("data-lazy"))
+            self._add_image(attrs_dict.get("data-lazy-src"))
+            self._add_srcset(attrs_dict.get("srcset"))
+            self._add_srcset(attrs_dict.get("data-srcset"))
+            return
+        if tag.lower() == "source":
+            self._add_srcset(attrs_dict.get("srcset"))
+            self._add_srcset(attrs_dict.get("data-srcset"))
+            return
+        if tag.lower() == "link":
+            rel = attrs_dict.get("rel", "").lower()
+            if rel in {"image_src", "preload"}:
+                self._add_image(attrs_dict.get("href"))
             return
         if tag.lower() != "meta":
             return
@@ -86,9 +140,8 @@ class _ProductHTMLParser(HTMLParser):
             self.title = content
         if prop in {"og:description", "description"} and not self.description:
             self.description = content
-        if prop in {"og:image", "twitter:image"}:
-            if content and content not in self.images:
-                self.images.append(content)
+        if prop in {"og:image", "og:image:secure_url", "twitter:image", "twitter:image:src"}:
+            self._add_image(content)
 
     def handle_endtag(self, tag: str) -> None:
         if tag.lower() == "title" and self._capture_title:
@@ -162,7 +215,7 @@ def _normalize_schema_availability(value: Any) -> ProductAvailability | None:
     return None
 
 
-def _normalize_images(value: Any) -> list[str]:
+def _normalize_images(value: Any, base_url: str | None = None) -> list[str]:
     items: list[str] = []
     if isinstance(value, str):
         items.append(value)
@@ -178,7 +231,18 @@ def _normalize_images(value: Any) -> list[str]:
         url = value.get("url") or value.get("@id")
         if isinstance(url, str):
             items.append(url)
-    return [item.strip() for item in items if item and item.strip()]
+    cleaned: list[str] = []
+    for item in items:
+        candidate = item.strip() if item else ""
+        if not candidate:
+            continue
+        if base_url:
+            normalized = _normalize_image_url(base_url, candidate)
+            if normalized:
+                cleaned.append(normalized)
+        else:
+            cleaned.append(candidate)
+    return cleaned
 
 
 def _merge_image_lists(
@@ -346,19 +410,22 @@ async def _scrape_product(
         if settings.PRODUCT_SCRAPE_DELAY_SEC:
             await asyncio.sleep(settings.PRODUCT_SCRAPE_DELAY_SEC)
         html_text = await _get_with_retries(client, url, expect_json=False)
-        parser = _ProductHTMLParser()
+        parser = _ProductHTMLParser(url)
         parser.feed(html_text)
         title = parser.title
         description = parser.description
         images = parser.images or []
-        images = _normalize_images(images)
+        images = _normalize_images(images, url)
         price: int | None = None
         availability: ProductAvailability | None = None
         json_ld = _extract_product_from_json_ld(html_text)
         if json_ld:
             title = json_ld.get("name") or json_ld.get("headline") or title
             description = json_ld.get("description") or description
-            json_images = _normalize_images(json_ld.get("image") or json_ld.get("images"))
+            json_images = _normalize_images(
+                json_ld.get("image") or json_ld.get("images"),
+                url,
+            )
             images = _merge_image_lists(images, json_images) or []
 
             offers = json_ld.get("offers")

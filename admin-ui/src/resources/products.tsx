@@ -30,6 +30,7 @@ const API_URL = import.meta.env.VITE_API_URL || DEFAULT_API_URL;
 
 const ProductFilters = [
   <TextInput key="q" label="جستجو" source="q" alwaysOn />,
+  <TextInput key="product_id" label="مدل/شناسه توروب" source="product_id" />,
   <SelectInput
     key="availability"
     source="availability"
@@ -45,6 +46,39 @@ const ProductFilters = [
   <DateInput key="updated_from" source="updated_from" label="از تاریخ بروزرسانی" />,
   <DateInput key="updated_to" source="updated_to" label="تا تاریخ بروزرسانی" />,
 ];
+
+const formatImages = (value: any) => {
+  if (Array.isArray(value)) {
+    return value.join(', ');
+  }
+  return value || '';
+};
+
+const parseImages = (value: string) =>
+  value
+    ? value
+        .split(',')
+        .map(item => item.trim())
+        .filter(Boolean)
+    : [];
+
+const renderProductImage = (record: any) => {
+  const images = Array.isArray(record?.images) ? record.images : [];
+  const url = images.length ? images[0] : null;
+  if (!url) return '-';
+  return (
+    <img
+      src={url}
+      alt={record?.title || record?.slug || 'product'}
+      style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 6 }}
+    />
+  );
+};
+
+const renderImageCount = (record: any) => {
+  const images = Array.isArray(record?.images) ? record.images : [];
+  return images.length ? `${images.length} تصویر` : '-';
+};
 
 const ProductsHeader = () => {
   const location = useLocation();
@@ -116,10 +150,12 @@ export const ProductList = () => (
   >
     <Datagrid rowClick="edit">
       <TextField source="id" label="شناسه" />
+      <FunctionField label="تصویر" render={renderProductImage} />
       <FunctionField
         label="عنوان"
         render={(record: any) => record.title || record.slug || '-'}
       />
+      <TextField source="product_id" label="مدل/توروب" />
       <TextField source="slug" label="اسلاگ" />
       <NumberField source="price" label="قیمت" />
       <NumberField source="old_price" label="قیمت قبل" />
@@ -132,6 +168,7 @@ export const ProductList = () => (
       />
       <DateField source="updated_at" label="بروزرسانی" showTime />
       <DateField source="lastmod" label="آخرین تغییر سایت" showTime />
+      <FunctionField label="تصاویر" render={renderImageCount} />
       <UrlField source="page_url" label="لینک" />
     </Datagrid>
   </List>
@@ -143,7 +180,7 @@ export const ProductCreate = () => (
       <TextInput source="page_url" label="لینک محصول" fullWidth />
       <TextInput source="title" label="عنوان" fullWidth />
       <TextInput source="slug" label="اسلاگ" />
-      <TextInput source="product_id" label="شناسه توروب" />
+      <TextInput source="product_id" label="مدل/شناسه توروب" />
       <SelectInput
         source="availability"
         label="موجودی"
@@ -156,7 +193,14 @@ export const ProductCreate = () => (
       <NumberInput source="price" label="قیمت" />
       <NumberInput source="old_price" label="قیمت قبل" />
       <TextInput source="description" label="توضیحات" fullWidth multiline />
-      <TextInput source="images" label="تصاویر" helperText="با کاما جدا کنید" />
+      <TextInput
+        source="images"
+        label="تصاویر"
+        helperText="URLها را با کاما جدا کنید"
+        format={formatImages}
+        parse={parseImages}
+        fullWidth
+      />
     </SimpleForm>
   </Create>
 );
@@ -167,7 +211,7 @@ export const ProductEdit = () => (
       <TextInput source="page_url" label="لینک محصول" fullWidth />
       <TextInput source="title" label="عنوان" fullWidth />
       <TextInput source="slug" label="اسلاگ" />
-      <TextInput source="product_id" label="شناسه توروب" />
+      <TextInput source="product_id" label="مدل/شناسه توروب" />
       <SelectInput
         source="availability"
         label="موجودی"
@@ -180,7 +224,14 @@ export const ProductEdit = () => (
       <NumberInput source="price" label="قیمت" />
       <NumberInput source="old_price" label="قیمت قبل" />
       <TextInput source="description" label="توضیحات" fullWidth multiline />
-      <TextInput source="images" label="تصاویر" helperText="با کاما جدا کنید" />
+      <TextInput
+        source="images"
+        label="تصاویر"
+        helperText="URLها را با کاما جدا کنید"
+        format={formatImages}
+        parse={parseImages}
+        fullWidth
+      />
     </SimpleForm>
   </Edit>
 );

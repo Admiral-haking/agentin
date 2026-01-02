@@ -19,7 +19,14 @@ def _tokenize(text: str) -> list[str]:
 
 def _score_product(product: Product, tokens: list[str]) -> int:
     haystack = " ".join(
-        part for part in [product.slug, product.title, product.description] if part
+        part
+        for part in [
+            product.slug,
+            product.title,
+            product.description,
+            product.product_id,
+        ]
+        if part
     ).lower()
     return sum(1 for token in tokens if token in haystack)
 
@@ -44,6 +51,7 @@ async def match_products(
                 Product.slug.ilike(like),
                 Product.title.ilike(like),
                 Product.description.ilike(like),
+                Product.product_id.ilike(like),
             ]
         )
     if not conditions:
