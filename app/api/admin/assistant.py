@@ -47,6 +47,7 @@ from app.schemas.webhook import NormalizedMessage
 from app.services.audit import record_audit
 from app.services.llm_clients import LLMError, generate_reply
 from app.services.llm_router import choose_provider
+from app.services.product_matcher import match_products
 from app.services.processor import generate_with_fallback, record_usage
 from app.services.prompts import load_prompt
 from app.utils.time import utc_now
@@ -122,6 +123,29 @@ def _sanitize_messages(
     if max_history > 0 and len(cleaned) > max_history:
         cleaned = cleaned[-max_history:]
     return cleaned
+
+
+def _build_product_context(products: list[Product]) -> str:
+    lines: list[str] = []
+    for product in products:
+        title = product.title or product.slug or "بدون عنوان"
+        price = str(product.price) if product.price is not None else "نامشخص"
+        old_price = str(product.old_price) if product.old_price is not None else None
+        availability = product.availability.value
+        parts = [title, f"قیمت: {price}"]
+        if old_price:
+            parts.append(f"قبل: {old_price}")
+        parts.append(f"موجودی: {availability}")
+        if product.page_url:
+            parts.append(f"لینک: {product.page_url}")
+        lines.append(" | ".join(parts))
+    return (
+        "[PRODUCTS]\n"
+        + "\n".join(f"- {line}" for line in lines)
+        + "\nRules:\n"
+        "- فقط از قیمت‌های بالا استفاده کن و قیمت جدید نساز.\n"
+        "- اگر قیمت نامشخص بود، همین را اعلام کن."
+    )
 
 
 async def _require_conversation(
@@ -1082,6 +1106,16 @@ async def chat_with_assistant(
         context = conversation.context.strip()
         if context:
             llm_messages.append({"role": "system", "content": f"Context: {context}"})
+
+    matched_products = await match_products(
+        session,
+        last_user_text,
+        limit=settings.PRODUCT_MATCH_LIMIT,
+    )
+    if matched_products:
+        llm_messages.append(
+            {"role": "system", "content": _build_product_context(matched_products)}
+        )
 
     for item in history_items:
         if item.role not in {"user", "assistant"}:
