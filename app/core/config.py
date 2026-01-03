@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     LLM_TIMEOUT_SEC: float = 15.0
     LLM_MAX_PROMPT_CHARS: int = 12000
     LLM_MESSAGE_MAX_CHARS: int = 1200
+    LLM_MAX_USER_TURNS: int = 6
     WINDOW_HOURS: int = 24
     REQUEST_TIMEOUT_SEC: float = 20.0
 
@@ -81,6 +82,8 @@ class Settings(BaseSettings):
     PRODUCT_SCRAPE_MAX: int = 50
     PRODUCT_MATCH_LIMIT: int = 5
     PRODUCT_MATCH_CANDIDATES: int = 50
+    PRODUCT_MATCH_MIN_SCORE: int = 2
+    PRODUCT_MATCH_SINGLE_TOKEN_MIN_LEN: int = 5
     ORDER_FORM_ENABLED: bool = True
     MEDIA_PROXY_BASE_URL: str = ""
     MEDIA_PROXY_ALLOWED_HOSTS: str = "ghlbedovom.com"

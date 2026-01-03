@@ -5,7 +5,7 @@ from typing import Any
 from datetime import datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.admin.utils import list_response, parse_filter
@@ -26,6 +26,18 @@ router = APIRouter(prefix="/admin/products", tags=["admin"])
 def _ensure_feature_enabled() -> None:
     if not settings.PRODUCTS_FEATURE_ENABLED:
         raise HTTPException(status_code=404, detail="Products feature disabled")
+
+
+def _parse_bool(value: object) -> bool | None:
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "yes", "y"}:
+            return True
+        if lowered in {"false", "0", "no", "n"}:
+            return False
+    return None
 
 
 @router.get("", response_model=dict)
@@ -57,6 +69,41 @@ async def list_products(
             query = query.where(Product.product_id.in_(product_id))
         else:
             query = query.where(Product.product_id == product_id)
+    if "has_product_id" in filters:
+        flag = _parse_bool(filters["has_product_id"])
+        if flag is True:
+            query = query.where(Product.product_id.isnot(None))
+        elif flag is False:
+            query = query.where(Product.product_id.is_(None))
+    if "has_price" in filters:
+        flag = _parse_bool(filters["has_price"])
+        if flag is True:
+            query = query.where(Product.price.isnot(None))
+        elif flag is False:
+            query = query.where(Product.price.is_(None))
+    if "has_old_price" in filters:
+        flag = _parse_bool(filters["has_old_price"])
+        if flag is True:
+            query = query.where(Product.old_price.isnot(None))
+        elif flag is False:
+            query = query.where(Product.old_price.is_(None))
+    if "has_images" in filters:
+        flag = _parse_bool(filters["has_images"])
+        images_count = case(
+            (
+                func.jsonb_typeof(Product.images) == "array",
+                func.jsonb_array_length(Product.images),
+            ),
+            else_=0,
+        )
+        if flag is True:
+            query = query.where(images_count > 0)
+        elif flag is False:
+            query = query.where(images_count == 0)
+    if "source" in filters:
+        source = filters["source"]
+        if isinstance(source, str):
+            query = query.where(Product.source_flags[source].astext == "true")
     if "min_price" in filters:
         try:
             min_price = int(filters["min_price"])
@@ -79,6 +126,18 @@ async def list_products(
         try:
             updated_to = datetime.fromisoformat(filters["updated_to"])
             query = query.where(Product.updated_at <= updated_to)
+        except ValueError:
+            pass
+    if "lastmod_from" in filters:
+        try:
+            lastmod_from = datetime.fromisoformat(filters["lastmod_from"])
+            query = query.where(Product.lastmod >= lastmod_from)
+        except ValueError:
+            pass
+    if "lastmod_to" in filters:
+        try:
+            lastmod_to = datetime.fromisoformat(filters["lastmod_to"])
+            query = query.where(Product.lastmod <= lastmod_to)
         except ValueError:
             pass
     if "q" in filters:

@@ -10,6 +10,7 @@ from app.api.admin.assistant import router as assistant_router
 from app.api.admin.settings import router as settings_router
 from app.api.admin.users import router as users_router
 from app.api.admin.directam import router as directam_router
+from app.api.admin.health import router as health_router
 
 router = APIRouter()
 router.include_router(campaigns_router)
@@ -22,3 +23,4 @@ router.include_router(logs_router)
 router.include_router(assistant_router)
 router.include_router(users_router)
 router.include_router(directam_router)
+router.include_router(health_router)

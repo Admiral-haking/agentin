@@ -124,6 +124,17 @@ def _sanitize_messages(
 
     if max_history > 0 and len(cleaned) > max_history:
         cleaned = cleaned[-max_history:]
+    if settings.LLM_MAX_USER_TURNS > 0:
+        trimmed: list[dict[str, str]] = []
+        user_turns = 0
+        for msg in reversed(cleaned):
+            trimmed.append(msg)
+            if msg.get("role") == "user":
+                user_turns += 1
+                if user_turns >= settings.LLM_MAX_USER_TURNS:
+                    break
+        trimmed.reverse()
+        cleaned = trimmed
     return cleaned
 
 
@@ -133,11 +144,17 @@ def _build_product_context(products: list[Product]) -> str:
         title = product.title or product.slug or "بدون عنوان"
         price = str(product.price) if product.price is not None else "نامشخص"
         old_price = str(product.old_price) if product.old_price is not None else None
-        availability = product.availability.value
+        availability = (
+            product.availability.value
+            if hasattr(product.availability, "value")
+            else str(product.availability)
+        )
         parts = [title, f"قیمت: {price}"]
         if old_price:
             parts.append(f"قبل: {old_price}")
         parts.append(f"موجودی: {availability}")
+        if product.product_id:
+            parts.append(f"مدل: {product.product_id}")
         if product.page_url:
             parts.append(f"لینک: {product.page_url}")
         lines.append(" | ".join(parts))
@@ -861,6 +878,15 @@ async def approve_action(
     if action.status != "pending":
         await session.refresh(action)
         return AssistantActionOut.model_validate(action)
+
+    if action.action_type.startswith("product."):
+        payload_data = await _prepare_product_action_payload(
+            session, action.action_type, dict(action.payload_json or {})
+        )
+        if payload_data != (action.payload_json or {}):
+            action.payload_json = payload_data
+            await session.commit()
+            await session.refresh(action)
 
     action.status = "approved"
     action.approved_by = admin.id

@@ -26,6 +26,7 @@ import { appTheme } from './theme';
 import { AssistantPage } from './pages/AssistantPage';
 import { AssistantActionsPage } from './pages/AssistantActionsPage';
 import { DirectamConsole } from './pages/DirectamConsole';
+import { HealthPage } from './pages/HealthPage';
 
 const productsEnabled = (import.meta.env.VITE_PRODUCTS_ENABLED || 'false') === 'true';
 
@@ -44,6 +45,7 @@ export const App = () => (
           <Route path="/assistant" element={<AssistantPage />} />
           <Route path="/assistant/actions" element={<AssistantActionsPage />} />
           <Route path="/directam" element={<DirectamConsole />} />
+          <Route path="/health" element={<HealthPage />} />
         </CustomRoutes>
         <Resource
           name="campaigns"

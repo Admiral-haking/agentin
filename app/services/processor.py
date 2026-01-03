@@ -509,6 +509,23 @@ async def get_recent_history(
     return messages
 
 
+def _trim_history_for_llm(
+    history: list[Message], max_user_turns: int
+) -> list[Message]:
+    if max_user_turns <= 0:
+        return history
+    trimmed: list[Message] = []
+    user_turns = 0
+    for msg in reversed(history):
+        trimmed.append(msg)
+        if msg.role == "user" and msg.type != "read":
+            user_turns += 1
+            if user_turns >= max_user_turns:
+                break
+    trimmed.reverse()
+    return trimmed
+
+
 async def get_verified_faqs(session: AsyncSession, limit: int = 30) -> list[Faq]:
     result = await session.execute(
         select(Faq)
@@ -579,6 +596,7 @@ def build_llm_messages(
     user: User,
     products: list[Product] | None = None,
 ) -> list[dict[str, str]]:
+    history = _trim_history_for_llm(history, settings.LLM_MAX_USER_TURNS)
     base_prompt = bot_settings.system_prompt if bot_settings else load_prompt("system.txt")
     store_knowledge = get_store_knowledge_text()
     prompt_parts = [base_prompt, store_knowledge]
@@ -616,11 +634,17 @@ def build_llm_messages(
             old_price = (
                 str(product.old_price) if product.old_price is not None else None
             )
-            availability = product.availability.value
+            availability = (
+                product.availability.value
+                if hasattr(product.availability, "value")
+                else str(product.availability)
+            )
             parts = [title, f"قیمت: {price}"]
             if old_price:
                 parts.append(f"قبل: {old_price}")
             parts.append(f"موجودی: {availability}")
+            if product.product_id:
+                parts.append(f"مدل: {product.product_id}")
             if product.page_url:
                 parts.append(f"لینک: {product.page_url}")
             product_lines.append(" | ".join(parts))

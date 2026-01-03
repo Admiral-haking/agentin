@@ -49,8 +49,56 @@ const ProductFilters = [
   />,
   <NumberInput key="min_price" source="min_price" label="حداقل قیمت" />,
   <NumberInput key="max_price" source="max_price" label="حداکثر قیمت" />,
+  <SelectInput
+    key="has_price"
+    source="has_price"
+    label="قیمت دارد"
+    choices={[
+      { id: 'true', name: 'دارد' },
+      { id: 'false', name: 'ندارد' },
+    ]}
+  />,
+  <SelectInput
+    key="has_old_price"
+    source="has_old_price"
+    label="قیمت قبل دارد"
+    choices={[
+      { id: 'true', name: 'دارد' },
+      { id: 'false', name: 'ندارد' },
+    ]}
+  />,
+  <SelectInput
+    key="has_product_id"
+    source="has_product_id"
+    label="مدل دارد"
+    choices={[
+      { id: 'true', name: 'دارد' },
+      { id: 'false', name: 'ندارد' },
+    ]}
+  />,
+  <SelectInput
+    key="has_images"
+    source="has_images"
+    label="تصویر دارد"
+    choices={[
+      { id: 'true', name: 'دارد' },
+      { id: 'false', name: 'ندارد' },
+    ]}
+  />,
+  <SelectInput
+    key="source"
+    source="source"
+    label="منبع"
+    choices={[
+      { id: 'torob', name: 'توروب' },
+      { id: 'sitemap', name: 'سایت' },
+      { id: 'scraped', name: 'اسکرپ' },
+    ]}
+  />,
   <DateInput key="updated_from" source="updated_from" label="از تاریخ بروزرسانی" />,
   <DateInput key="updated_to" source="updated_to" label="تا تاریخ بروزرسانی" />,
+  <DateInput key="lastmod_from" source="lastmod_from" label="از آخرین تغییر سایت" />,
+  <DateInput key="lastmod_to" source="lastmod_to" label="تا آخرین تغییر سایت" />,
 ];
 
 const formatImages = (value: any) => {

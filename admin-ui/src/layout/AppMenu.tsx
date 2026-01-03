@@ -11,6 +11,7 @@ import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded';
 import PeopleAltRoundedIcon from '@mui/icons-material/PeopleAltRounded';
 import FactCheckRoundedIcon from '@mui/icons-material/FactCheckRounded';
 import SendRoundedIcon from '@mui/icons-material/SendRounded';
+import HealthAndSafetyRoundedIcon from '@mui/icons-material/HealthAndSafetyRounded';
 
 export const AppMenu = () => {
   const { permissions } = usePermissions();
@@ -46,6 +47,7 @@ export const AppMenu = () => {
           <ListSubheader component="div" disableSticky sx={{ letterSpacing: 0, fontWeight: 700 }}>
             سیستم
           </ListSubheader>
+          <MenuItemLink to="/health" primaryText="سلامت سیستم" leftIcon={<HealthAndSafetyRoundedIcon />} />
           <MenuItemLink to="/settings" primaryText="تنظیمات هوش مصنوعی" leftIcon={<SettingsRoundedIcon />} />
         </>
       )}
