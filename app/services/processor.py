@@ -52,6 +52,7 @@ from app.services.product_matcher import (
     tokenize_query,
 )
 from app.services.product_presenter import build_product_plan, wants_product_list
+from app.services.product_taxonomy import infer_tags
 from app.services.prompts import load_prompt
 from app.services.sender import Sender, SenderError
 from app.services.user_profile import extract_preferences
@@ -354,6 +355,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 return
 
             tokens = tokenize_query(normalized.text)
+            query_tags = infer_tags(normalized.text)
             matches = await match_products_with_scores(
                 session,
                 normalized.text,
@@ -364,6 +366,13 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             wants_products = wants_product_list(normalized.text)
             needs_details = needs_product_details(lowered)
             product_intent = wants_product_intent(lowered)
+            if (
+                query_tags.categories
+                or query_tags.genders
+                or query_tags.materials
+                or query_tags.styles
+            ):
+                product_intent = True
             store_intent = (
                 is_greeting(lowered)
                 or wants_website(lowered)
@@ -781,12 +790,34 @@ def build_llm_messages(
                 if hasattr(product.availability, "value")
                 else str(product.availability)
             )
+            product_tags = infer_tags(
+                " ".join(
+                    part
+                    for part in [
+                        product.slug,
+                        product.title,
+                        product.description,
+                        product.product_id,
+                    ]
+                    if part
+                )
+            )
             parts = [title, f"قیمت: {price}"]
             if old_price:
                 parts.append(f"قبل: {old_price}")
             parts.append(f"موجودی: {availability}")
             if product.product_id:
                 parts.append(f"مدل: {product.product_id}")
+            if product_tags.categories:
+                parts.append(f"دسته: {', '.join(product_tags.categories)}")
+            if product_tags.genders:
+                parts.append(f"جنسیت: {', '.join(product_tags.genders)}")
+            if product_tags.materials:
+                parts.append(f"جنس: {', '.join(product_tags.materials)}")
+            if product_tags.styles:
+                parts.append(f"سبک: {', '.join(product_tags.styles)}")
+            if product_tags.colors:
+                parts.append(f"رنگ: {', '.join(product_tags.colors[:3])}")
             if product.page_url:
                 parts.append(f"لینک: {product.page_url}")
             product_lines.append(" | ".join(parts))

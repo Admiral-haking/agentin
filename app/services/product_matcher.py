@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.product import Product
+from app.services.product_taxonomy import expand_query_terms, infer_tags
 
 _TOKEN_RE = re.compile(r"[\w\u0600-\u06FF]+", re.UNICODE)
 _STOPWORDS = {
@@ -99,6 +100,7 @@ class ProductMatch:
     score: int
     token_count: int
     matched_tokens: tuple[str, ...]
+    matched_tags: tuple[str, ...]
 
 
 async def match_products(
@@ -122,8 +124,12 @@ async def match_products_with_scores(
     tokens = _tokenize(text)
     if not tokens:
         return []
+    terms = expand_query_terms(text)
+    terms = list(dict.fromkeys(tokens + terms))
+    if len(terms) > settings.PRODUCT_MATCH_QUERY_TERMS:
+        terms = terms[: settings.PRODUCT_MATCH_QUERY_TERMS]
     conditions = []
-    for token in tokens:
+    for token in terms:
         like = f"%{token}%"
         conditions.extend(
             [
@@ -144,15 +150,65 @@ async def match_products_with_scores(
     )
     result = await session.execute(query)
     candidates = list(result.scalars().all())
-    scored: list[tuple[int, datetime | None, Product, list[str]]] = []
+    query_tags = infer_tags(text)
+    scored: list[tuple[int, datetime | None, Product, list[str], list[str]]] = []
     for product in candidates:
-        score = _score_product(product, tokens)
-        if score <= 0:
+        product_text = " ".join(
+            part
+            for part in [
+                product.slug,
+                product.title,
+                product.description,
+                product.product_id,
+            ]
+            if part
+        )
+        product_tags = infer_tags(product_text)
+        if (
+            query_tags.categories
+            and product_tags.categories
+            and not set(query_tags.categories).intersection(product_tags.categories)
+        ):
             continue
-        if not _meets_threshold(score, tokens, product):
+        if (
+            query_tags.genders
+            and product_tags.genders
+            and not set(query_tags.genders).intersection(product_tags.genders)
+        ):
             continue
+        if (
+            query_tags.materials
+            and product_tags.materials
+            and not set(query_tags.materials).intersection(product_tags.materials)
+        ):
+            continue
+        if (
+            query_tags.styles
+            and product_tags.styles
+            and not set(query_tags.styles).intersection(product_tags.styles)
+        ):
+            continue
+
+        token_score = _score_product(product, tokens)
+        matched_tags: list[str] = []
+        for label, values in (
+            ("cat", set(query_tags.categories).intersection(product_tags.categories)),
+            ("gen", set(query_tags.genders).intersection(product_tags.genders)),
+            ("mat", set(query_tags.materials).intersection(product_tags.materials)),
+            ("sty", set(query_tags.styles).intersection(product_tags.styles)),
+        ):
+            for value in values:
+                matched_tags.append(f"{label}:{value}")
+        tag_bonus = len(matched_tags)
+        if token_score <= 0 and tag_bonus <= 0:
+            continue
+        if token_score > 0 and not _meets_threshold(token_score, tokens, product):
+            continue
+        if token_score <= 0 and len(tokens) >= 2 and tag_bonus < 2:
+            continue
+        score = token_score + tag_bonus
         matched = _matched_tokens(product, tokens)
-        scored.append((score, product.updated_at, product, matched))
+        scored.append((score, product.updated_at, product, matched, matched_tags))
 
     scored.sort(
         key=lambda item: (item[0], item[1] or datetime.min), reverse=True
@@ -164,6 +220,7 @@ async def match_products_with_scores(
             score=item[0],
             token_count=len(tokens),
             matched_tokens=tuple(item[3]),
+            matched_tags=tuple(item[4]),
         )
         for item in scored[:max_items]
     ]

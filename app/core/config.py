@@ -87,6 +87,7 @@ class Settings(BaseSettings):
     PRODUCT_MATCH_CANDIDATES: int = 50
     PRODUCT_MATCH_MIN_SCORE: int = 2
     PRODUCT_MATCH_SINGLE_TOKEN_MIN_LEN: int = 5
+    PRODUCT_MATCH_QUERY_TERMS: int = 14
     ORDER_FORM_ENABLED: bool = True
     ORDER_FORM_TTL_MIN: int = 30
     MEDIA_PROXY_BASE_URL: str = ""

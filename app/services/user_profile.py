@@ -3,76 +3,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
-_COLOR_KEYWORDS = {
-    "مشکی",
-    "سفید",
-    "قرمز",
-    "آبی",
-    "سبز",
-    "زرد",
-    "صورتی",
-    "نارنجی",
-    "سرمه‌ای",
-    "سرمه اي",
-    "طوسی",
-    "خاکستری",
-    "کرم",
-    "قهوه‌ای",
-    "قهوه اي",
-    "بنفش",
-    "طلایی",
-    "طلائي",
-    "نقره‌ای",
-    "نقره اي",
-}
-_SIZE_KEYWORDS = {
-    "xs",
-    "s",
-    "m",
-    "l",
-    "xl",
-    "xxl",
-    "xxxl",
-    "فری",
-    "فری‌سایز",
-    "فری سایز",
-    "free",
-}
-_GENDER_KEYWORDS = {
-    "زنانه": "زنانه",
-    "مردانه": "مردانه",
-    "دخترانه": "زنانه",
-    "پسرانه": "مردانه",
-    "بچگانه": "بچگانه",
-    "کودک": "بچگانه",
-}
-_CATEGORY_KEYWORDS = {
-    "کفش": "کفش",
-    "کتونی": "کفش",
-    "اسنیکر": "کفش",
-    "لباس": "لباس",
-    "پیراهن": "لباس",
-    "تی‌شرت": "لباس",
-    "تیشرت": "لباس",
-    "شلوار": "لباس",
-    "هودی": "لباس",
-    "مانتو": "لباس",
-    "کیف": "کیف",
-    "کوله": "کیف",
-    "عطر": "عطر",
-    "ادکلن": "عطر",
-    "بادی": "عطر",
-    "زیور": "زیورآلات",
-    "گردنبند": "زیورآلات",
-    "گوشواره": "زیورآلات",
-    "دستبند": "زیورآلات",
-    "آرایشی": "آرایشی",
-    "بهداشتی": "بهداشتی",
-    "کرم": "آرایشی",
-    "رژ": "آرایشی",
-    "ریمل": "آرایشی",
-}
+from app.services.product_taxonomy import (
+    COLOR_KEYWORDS,
+    GENDER_SYNONYMS,
+    SIZE_KEYWORDS,
+    infer_tags,
+)
 
 
 def _normalize_text(text: str) -> str:
@@ -123,7 +59,7 @@ def extract_preferences(text: str | None) -> dict[str, Any]:
     budget = _extract_budget(normalized)
     updates.update(budget)
 
-    colors = [color for color in _COLOR_KEYWORDS if color in normalized]
+    colors = [color for color in COLOR_KEYWORDS if color in normalized]
     if colors:
         updates["colors"] = list(dict.fromkeys(colors))
 
@@ -131,23 +67,20 @@ def extract_preferences(text: str | None) -> dict[str, Any]:
     sizes = []
     if size_match:
         sizes.append(size_match.group(1))
-    for item in _SIZE_KEYWORDS:
+    for item in SIZE_KEYWORDS:
         if item in normalized:
             sizes.append(item)
     sizes = [size for size in sizes if size]
     if sizes:
         updates["sizes"] = list(dict.fromkeys(sizes))
 
-    for key, value in _GENDER_KEYWORDS.items():
-        if key in normalized:
-            updates["gender"] = value
+    for gender, keywords in GENDER_SYNONYMS.items():
+        if any(keyword in normalized for keyword in keywords):
+            updates["gender"] = gender
             break
 
-    categories = []
-    for key, value in _CATEGORY_KEYWORDS.items():
-        if key in normalized:
-            categories.append(value)
-    if categories:
-        updates["categories"] = list(dict.fromkeys(categories))
+    tags = infer_tags(normalized)
+    if tags.categories:
+        updates["categories"] = list(tags.categories)
 
     return updates
