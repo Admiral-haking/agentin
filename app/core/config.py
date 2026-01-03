@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     DEFAULT_LANGUAGE: str = "fa"
     MAX_HISTORY_MESSAGES: int = 20
     MAX_RESPONSE_CHARS: int = 800
+    LLM_TEMPERATURE: float = 0.2
+    LLM_MAX_TOKENS: int = 700
+    LLM_TIMEOUT_SEC: float = 15.0
+    LLM_MAX_PROMPT_CHARS: int = 12000
+    LLM_MESSAGE_MAX_CHARS: int = 1200
     WINDOW_HOURS: int = 24
     REQUEST_TIMEOUT_SEC: float = 20.0
 

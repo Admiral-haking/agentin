@@ -65,6 +65,17 @@ def _normalize_images(value: object | None) -> list[str]:
     return []
 
 
+def _build_product_buttons(product: Product) -> list[Button]:
+    buttons: list[Button] = []
+    if product.page_url:
+        buttons.append(
+            Button(type="web_url", title="مشاهده محصول", url=product.page_url)
+        )
+    if settings.ORDER_FORM_ENABLED:
+        buttons.append(Button(type="postback", title="ثبت سفارش", payload="ثبت سفارش"))
+    return buttons[: settings.MAX_BUTTONS]
+
+
 def wants_product_list(text: str | None) -> bool:
     normalized = (text or "").strip().lower()
     if not normalized:
@@ -113,11 +124,7 @@ def build_product_plan(
             image_url = None
             if images:
                 image_url = _proxy_image_url(images[0])
-            buttons = []
-            if product.page_url:
-                buttons.append(
-                    Button(type="web_url", title="مشاهده محصول", url=product.page_url)
-                )
+            buttons = _build_product_buttons(product)
             elements.append(
                 TemplateElement(
                     title=title[:80],
@@ -145,9 +152,7 @@ def build_product_plan(
         if product.old_price:
             subtitle_parts.insert(1, f"قبل: {_format_price(product.old_price)}")
         subtitle = " | ".join(subtitle_parts)
-        buttons = []
-        if product.page_url:
-            buttons.append(Button(type="web_url", title="مشاهده محصول", url=product.page_url))
+        buttons = _build_product_buttons(product)
         for idx, raw_url in enumerate(
             images[: settings.MAX_TEMPLATE_SLIDES], start=1
         ):
@@ -163,6 +168,27 @@ def build_product_plan(
         if elements:
             return OutboundPlan(type="generic_template", elements=elements)
 
+    if images:
+        title = product.title or product.slug or "محصول"
+        price = _format_price(product.price)
+        availability_value = (
+            product.availability.value
+            if hasattr(product.availability, "value")
+            else str(product.availability)
+        )
+        availability = _availability_label(availability_value)
+        subtitle_parts = [f"قیمت: {price}", f"موجودی: {availability}"]
+        if product.old_price:
+            subtitle_parts.insert(1, f"قبل: {_format_price(product.old_price)}")
+        subtitle = " | ".join(subtitle_parts)
+        element = TemplateElement(
+            title=title[:80],
+            subtitle=subtitle[:80],
+            image_url=_proxy_image_url(images[0]),
+            buttons=_build_product_buttons(product),
+        )
+        return OutboundPlan(type="generic_template", elements=[element])
+
     title = product.title or product.slug or "محصول"
     price = _format_price(product.price)
     availability_value = (
@@ -175,7 +201,5 @@ def build_product_plan(
     if product.old_price:
         text_parts.insert(2, f"قبل: {_format_price(product.old_price)}")
     message = " | ".join(text_parts)
-    buttons = []
-    if product.page_url:
-        buttons.append(Button(type="web_url", title="مشاهده محصول", url=product.page_url))
+    buttons = _build_product_buttons(product)
     return OutboundPlan(type="button", text=message, buttons=buttons)
