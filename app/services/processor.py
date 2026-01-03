@@ -381,7 +381,18 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 or wants_phone(lowered)
                 or wants_trust(lowered)
             )
-            is_plain_list_request = wants_products and len(tokens) <= 1
+            is_plain_list_request = (
+                wants_products
+                and len(tokens) <= 1
+                and not (
+                    query_tags.categories
+                    or query_tags.genders
+                    or query_tags.materials
+                    or query_tags.styles
+                    or query_tags.colors
+                    or query_tags.sizes
+                )
+            )
             if wants_products and not matched_products and is_plain_list_request:
                 result = await session.execute(
                     select(Product)
