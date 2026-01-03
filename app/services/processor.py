@@ -737,6 +737,20 @@ async def send_plan_and_store(
     receiver_id: str,
     plan: OutboundPlan,
 ) -> str | None:
+    def _plan_to_text(value: OutboundPlan) -> str:
+        if value.text:
+            return value.text
+        if value.type == "generic_template":
+            lines = []
+            for element in value.elements:
+                line = element.title
+                if element.subtitle:
+                    line = f"{line} - {element.subtitle}"
+                lines.append(line)
+            if lines:
+                return "\n".join(lines)
+        return fallback_for_message_type("text")
+
     if not await within_window(session, conversation_id):
         logger.info(
             "window_expired",
@@ -766,6 +780,8 @@ async def send_plan_and_store(
     if plan.type == "audio" and not plan.audio_url:
         plan.type = "text"
         plan.text = fallback_for_message_type("text")
+    if plan.text:
+        plan.text = plan.text[: settings.MAX_RESPONSE_CHARS].strip()
 
     if plan.type == "button":
         plan.buttons = plan.buttons[: settings.MAX_BUTTONS]
@@ -856,7 +872,35 @@ async def send_plan_and_store(
             message=str(exc),
             data={"receiver_id": receiver_id, "message_type": plan.type},
         )
-        return None
+        if plan.type == "text":
+            return None
+        fallback_text = _plan_to_text(plan)
+        try:
+            response_data = await sender.send_text(receiver_id, fallback_text)
+        except SenderError:
+            return None
+        message_id = None
+        if isinstance(response_data, dict):
+            message_id = response_data.get("message_id")
+        logger.info(
+            "outbound_sent",
+            receiver_id=receiver_id,
+            message_type="text_fallback",
+            message_id=message_id,
+        )
+        await log_event(
+            session,
+            level="info",
+            event_type="outbound_sent",
+            message=fallback_text,
+            data={
+                "receiver_id": receiver_id,
+                "message_type": "text_fallback",
+                "message_id": message_id,
+            },
+            commit=False,
+        )
+        plan = OutboundPlan(type="text", text=fallback_text)
 
     conversation = await session.get(Conversation, conversation_id)
     if conversation:

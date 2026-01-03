@@ -874,6 +874,11 @@ async def create_action(
                 status_code=400,
                 detail="campaign.update/delete requires id.",
             )
+    if payload.action_type == "settings.update" and not payload_data:
+        raise HTTPException(
+            status_code=400,
+            detail="settings.update requires at least one setting field.",
+        )
     action = AssistantAction(
         conversation_id=payload.conversation_id,
         admin_id=admin.id,
@@ -961,6 +966,12 @@ async def approve_action(
             await session.commit()
             await session.refresh(action)
             return _action_to_out(action)
+    if action.action_type == "settings.update" and not (action.payload_json or {}):
+        action.status = "failed"
+        action.error = "settings.update requires at least one setting field."
+        await session.commit()
+        await session.refresh(action)
+        return _action_to_out(action)
 
     action.status = "approved"
     action.approved_by = admin.id

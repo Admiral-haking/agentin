@@ -8,16 +8,28 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.user import User
 from app.schemas.send import OutboundPlan, QuickReplyOption
-from app.utils.time import utc_now
+from app.utils.time import parse_timestamp, utc_now
 
 ORDER_KEYWORDS = {
-    "خرید",
-    "سفارش",
     "ثبت سفارش",
-    "میخوام بخرم",
     "میخوام سفارش بدم",
-    "buy",
-    "order",
+    "میخواهم سفارش بدم",
+    "میخوام سفارش ثبت کنم",
+    "میخواهم سفارش ثبت کنم",
+    "میخوام بخرم",
+    "میخواهم بخرم",
+    "order now",
+    "place order",
+}
+CLEAR_ORDER_KEYWORDS = {
+    "قیمت",
+    "محصول",
+    "محصولات",
+    "کاتالوگ",
+    "عکس",
+    "تصویر",
+    "لینک",
+    "لیست",
 }
 CANCEL_KEYWORDS = {
     "لغو",
@@ -61,6 +73,48 @@ def _format_phone(text: str) -> str | None:
     return None
 
 
+def _looks_like_name(text: str | None) -> bool:
+    if not text:
+        return False
+    cleaned = " ".join(text.strip().split())
+    if len(cleaned) < 3:
+        return False
+    if re.search(r"\d", cleaned):
+        return False
+    parts = cleaned.split(" ")
+    if len(parts) < 2:
+        return False
+    lowered = cleaned.lower()
+    if any(keyword in lowered for keyword in CLEAR_ORDER_KEYWORDS):
+        return False
+    return True
+
+
+def _is_explicit_order_intent(normalized: str) -> bool:
+    if not normalized:
+        return False
+    if normalized in ORDER_KEYWORDS:
+        return True
+    if normalized.startswith("ثبت سفارش"):
+        return True
+    if normalized.startswith("سفارش می"):
+        return True
+    return False
+
+
+def _order_form_expired(order_form: dict[str, Any]) -> bool:
+    ttl_minutes = settings.ORDER_FORM_TTL_MIN
+    if ttl_minutes <= 0:
+        return False
+    started_at = order_form.get("started_at") or order_form.get("updated_at")
+    if not started_at:
+        return False
+    started = parse_timestamp(started_at)
+    if not started:
+        return False
+    return (utc_now() - started).total_seconds() > ttl_minutes * 60
+
+
 async def handle_order_flow(
     session: AsyncSession,
     user: User,
@@ -74,6 +128,11 @@ async def handle_order_flow(
 
     profile = _get_profile(user)
     order_form = profile.get("order_form") if isinstance(profile, dict) else None
+    if order_form and _order_form_expired(order_form):
+        profile.pop("order_form", None)
+        _set_profile(user, profile)
+        await session.commit()
+        order_form = None
 
     if any(keyword in normalized for keyword in CANCEL_KEYWORDS):
         if order_form:
@@ -87,10 +146,13 @@ async def handle_order_flow(
         data = order_form.get("data", {})
 
         if step == "name":
-            if len(normalized) < 2:
-                return _build_quick_reply("نام و نام خانوادگی را کامل وارد کنید.")
+            if not _looks_like_name(message_text):
+                return _build_quick_reply(
+                    "برای ثبت سفارش هستید؟ اگر بله نام و نام خانوادگی را ارسال کنید. اگر نه بنویسید «لغو سفارش»."
+                )
             data["name"] = message_text.strip()
             order_form["step"] = "phone"
+            order_form["updated_at"] = utc_now().isoformat()
             order_form["data"] = data
             profile["order_form"] = order_form
             _set_profile(user, profile)
@@ -100,9 +162,12 @@ async def handle_order_flow(
         if step == "phone":
             phone = _format_phone(message_text)
             if not phone:
-                return _build_quick_reply("شماره موبایل معتبر نیست. لطفاً دوباره وارد کنید.")
+                return _build_quick_reply(
+                    "شماره موبایل معتبر نیست. اگر قصد سفارش ندارید بنویسید «لغو سفارش»."
+                )
             data["phone"] = phone
             order_form["step"] = "address"
+            order_form["updated_at"] = utc_now().isoformat()
             order_form["data"] = data
             profile["order_form"] = order_form
             _set_profile(user, profile)
@@ -114,6 +179,7 @@ async def handle_order_flow(
                 return _build_quick_reply("آدرس کامل‌تری ارسال کنید.")
             data["address"] = message_text.strip()
             order_form["step"] = "note"
+            order_form["updated_at"] = utc_now().isoformat()
             order_form["data"] = data
             profile["order_form"] = order_form
             _set_profile(user, profile)
@@ -127,6 +193,7 @@ async def handle_order_flow(
             data["note"] = note
             order_form["status"] = "done"
             order_form["completed_at"] = utc_now().isoformat()
+            order_form["updated_at"] = utc_now().isoformat()
             order_form["data"] = data
             profile["order_form"] = order_form
             _set_profile(user, profile)
@@ -142,12 +209,13 @@ async def handle_order_flow(
             summary += "اگر محصول خاصی مدنظر دارید، نام یا لینک آن را ارسال کنید."
             return OutboundPlan(type="text", text=summary)
 
-    if any(keyword in normalized for keyword in ORDER_KEYWORDS):
+    if _is_explicit_order_intent(normalized):
         profile["order_form"] = {
             "status": "collecting",
             "step": "name",
             "data": {},
             "started_at": utc_now().isoformat(),
+            "updated_at": utc_now().isoformat(),
         }
         _set_profile(user, profile)
         await session.commit()
