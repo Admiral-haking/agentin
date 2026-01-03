@@ -16,8 +16,6 @@ CATEGORY_SYNONYMS: dict[str, set[str]] = {
         "کالج",
         "بوت",
         "نیم بوت",
-        "صندل",
-        "دمپایی",
         "shoe",
         "shoes",
         "sneaker",
@@ -30,6 +28,14 @@ CATEGORY_SYNONYMS: dict[str, set[str]] = {
         "sandals",
         "heel",
         "heels",
+    },
+    "صندل و دمپایی": {
+        "صندل",
+        "دمپایی",
+        "slipper",
+        "slippers",
+        "sandal",
+        "sandals",
     },
     "لباس": {
         "لباس",
@@ -64,6 +70,35 @@ CATEGORY_SYNONYMS: dict[str, set[str]] = {
         "top",
         "blouse",
     },
+    "شال و روسری": {
+        "شال",
+        "روسری",
+        "اسکارف",
+        "scarf",
+        "shawl",
+    },
+    "لباس زیر": {
+        "لباس زیر",
+        "زیر",
+        "سوتین",
+        "شورت",
+        "underwear",
+        "bra",
+        "brief",
+    },
+    "جوراب": {
+        "جوراب",
+        "sock",
+        "socks",
+    },
+    "کلاه و شال گردن": {
+        "کلاه",
+        "شال گردن",
+        "گردن",
+        "hat",
+        "cap",
+        "scarf",
+    },
     "کیف": {
         "کیف",
         "کوله",
@@ -74,6 +109,7 @@ CATEGORY_SYNONYMS: dict[str, set[str]] = {
         "backpack",
         "wallet",
         "clutch",
+        "handbag",
     },
     "زیورآلات": {
         "زیور",
@@ -89,7 +125,7 @@ CATEGORY_SYNONYMS: dict[str, set[str]] = {
         "ring",
         "earring",
     },
-    "عطر": {
+    "عطر و ادکلن": {
         "عطر",
         "ادکلن",
         "ادکلن",
@@ -100,6 +136,13 @@ CATEGORY_SYNONYMS: dict[str, set[str]] = {
         "cologne",
         "fragrance",
         "body-splash",
+    },
+    "آرایشی و بهداشتی": {
+        "آرایشی",
+        "بهداشتی",
+        "cosmetics",
+        "cosmetic",
+        "sanitary",
     },
     "آرایشی": {
         "آرایشی",
@@ -124,6 +167,7 @@ CATEGORY_SYNONYMS: dict[str, set[str]] = {
     },
     "اکسسوری": {
         "اکسسوری",
+        "لوازم جانبی",
         "کمربند",
         "کلاه",
         "عینک",
@@ -134,6 +178,18 @@ CATEGORY_SYNONYMS: dict[str, set[str]] = {
         "cap",
         "glasses",
         "sunglasses",
+    },
+    "لوازم جانبی کفش": {
+        "لوازم جانبی کفش",
+        "بند کفش",
+        "shoe accessories",
+    },
+    "سرگرمی": {
+        "سرگرمی",
+        "پاسور",
+        "ویپ",
+        "entertainment",
+        "game",
     },
 }
 
@@ -149,6 +205,7 @@ STYLE_SYNONYMS: dict[str, set[str]] = {
     "مجلسی": {"مجلسی", "party", "evening"},
     "روزمره": {"روزمره", "روزانه", "daily"},
     "ورزشی": {"ورزشی", "sport", "athletic"},
+    "طبی": {"طبی", "medical", "orthopedic"},
 }
 
 MATERIAL_SYNONYMS: dict[str, set[str]] = {
@@ -157,6 +214,8 @@ MATERIAL_SYNONYMS: dict[str, set[str]] = {
     "نخی": {"نخی", "کتان", "پنبه", "cotton", "linen"},
     "فلزی": {"فلزی", "استیل", "steel", "metal"},
     "پلاستیک": {"پلاستیک", "پلاستیکی", "plastic"},
+    "پلی‌استر": {"پلی استر", "پلی‌استر", "polyester"},
+    "کتان": {"کتان", "linen"},
 }
 
 COLOR_KEYWORDS = {
@@ -181,6 +240,11 @@ COLOR_KEYWORDS = {
     "طلائي",
     "نقره‌ای",
     "نقره اي",
+    "نفتی",
+    "لیمویی",
+    "زرشکی",
+    "آبی نفتی",
+    "سبز لجنی",
     "black",
     "white",
     "red",

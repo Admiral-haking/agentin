@@ -111,11 +111,18 @@ PRODUCT_INTENT_KEYWORDS = {
     "دنبال",
     "دارید",
     "دارین",
+    "دسته",
+    "دسته بندی",
+    "دسته‌بندی",
+    "منو",
+    "کالکشن",
     "price",
     "product",
     "products",
     "catalog",
     "list",
+    "category",
+    "collection",
 }
 ANGRY_KEYWORDS = {
     "ناراضی",

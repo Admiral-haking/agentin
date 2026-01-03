@@ -164,28 +164,20 @@ async def match_products_with_scores(
             if part
         )
         product_tags = infer_tags(product_text)
-        if (
-            query_tags.categories
-            and product_tags.categories
-            and not set(query_tags.categories).intersection(product_tags.categories)
+        if query_tags.categories and not set(query_tags.categories).intersection(
+            product_tags.categories
         ):
             continue
-        if (
-            query_tags.genders
-            and product_tags.genders
-            and not set(query_tags.genders).intersection(product_tags.genders)
+        if query_tags.genders and not set(query_tags.genders).intersection(
+            product_tags.genders
         ):
             continue
-        if (
-            query_tags.materials
-            and product_tags.materials
-            and not set(query_tags.materials).intersection(product_tags.materials)
+        if query_tags.materials and not set(query_tags.materials).intersection(
+            product_tags.materials
         ):
             continue
-        if (
-            query_tags.styles
-            and product_tags.styles
-            and not set(query_tags.styles).intersection(product_tags.styles)
+        if query_tags.styles and not set(query_tags.styles).intersection(
+            product_tags.styles
         ):
             continue
 
