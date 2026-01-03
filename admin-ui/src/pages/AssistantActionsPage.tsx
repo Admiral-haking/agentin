@@ -3,6 +3,10 @@ import {
   Box,
   Button,
   Chip,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogTitle,
   FormControl,
   InputLabel,
   MenuItem,
@@ -14,6 +18,7 @@ import {
   TableCell,
   TableHead,
   TableRow,
+  TextField,
   Typography,
 } from '@mui/material';
 import { Title } from 'react-admin';
@@ -52,6 +57,11 @@ export const AssistantActionsPage = () => {
   const [actions, setActions] = useState<AssistantAction[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editAction, setEditAction] = useState<AssistantAction | null>(null);
+  const [editPayload, setEditPayload] = useState('');
+  const [editSummary, setEditSummary] = useState('');
+  const [editError, setEditError] = useState<string | null>(null);
 
   const filterQuery = useMemo(() => {
     if (statusFilter === 'all') return '';
@@ -103,6 +113,62 @@ export const AssistantActionsPage = () => {
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Action update failed.';
       setError(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const openEdit = (action: AssistantAction) => {
+    setEditAction(action);
+    setEditSummary(action.summary || '');
+    setEditPayload(JSON.stringify(action.payload_json ?? {}, null, 2));
+    setEditError(null);
+    setEditOpen(true);
+  };
+
+  const closeEdit = () => {
+    setEditOpen(false);
+    setEditAction(null);
+    setEditError(null);
+  };
+
+  const saveEdit = async () => {
+    if (!editAction) return;
+    let parsedPayload: Record<string, unknown> = {};
+    try {
+      const parsed = JSON.parse(editPayload || '{}');
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+        setEditError('Payload باید یک شیء JSON باشد.');
+        return;
+      }
+      parsedPayload = parsed as Record<string, unknown>;
+    } catch {
+      setEditError('JSON نامعتبر است.');
+      return;
+    }
+    setLoading(true);
+    setEditError(null);
+    try {
+      const response = await fetchWithAuth(
+        `${API_URL}/admin/assistant/actions/${editAction.id}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            summary: editSummary || null,
+            payload: parsedPayload,
+          }),
+        }
+      );
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.detail || 'ویرایش اکشن ناموفق بود.');
+      }
+      await loadActions();
+      closeEdit();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'ویرایش اکشن ناموفق بود.';
+      setEditError(message);
     } finally {
       setLoading(false);
     }
@@ -192,6 +258,14 @@ export const AssistantActionsPage = () => {
                       <Stack direction="row" spacing={1} justifyContent="flex-end">
                         <Button
                           size="small"
+                          variant="outlined"
+                          onClick={() => openEdit(action)}
+                          disabled={loading}
+                        >
+                          ویرایش
+                        </Button>
+                        <Button
+                          size="small"
                           variant="contained"
                           color="primary"
                           onClick={() => updateStatus(action.id, 'approve')}
@@ -228,6 +302,39 @@ export const AssistantActionsPage = () => {
           </Table>
         </Stack>
       </Paper>
+
+      <Dialog open={editOpen} onClose={closeEdit} maxWidth="sm" fullWidth>
+        <DialogTitle>ویرایش اکشن</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            <TextField
+              label="خلاصه"
+              value={editSummary}
+              onChange={event => setEditSummary(event.target.value)}
+              fullWidth
+            />
+            <TextField
+              label="Payload JSON"
+              value={editPayload}
+              onChange={event => setEditPayload(event.target.value)}
+              fullWidth
+              multiline
+              minRows={6}
+              error={Boolean(editError)}
+              helperText={editError || 'فیلدهای لازم را تکمیل کنید (مثل page_url یا id).'}
+              sx={{ fontFamily: 'monospace' }}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button onClick={closeEdit} disabled={loading}>
+            انصراف
+          </Button>
+          <Button onClick={saveEdit} variant="contained" disabled={loading}>
+            ذخیره
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 };

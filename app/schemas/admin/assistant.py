@@ -92,3 +92,8 @@ class AssistantActionOut(BaseModel):
     executed_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class AssistantActionUpdate(BaseModel):
+    summary: str | None = Field(default=None, max_length=255)
+    payload: dict | None = None

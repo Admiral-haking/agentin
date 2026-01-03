@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from urllib.parse import urlparse
 import csv
 import io
 import json
@@ -32,6 +33,7 @@ from app.models import (
 from app.schemas.admin.assistant import (
     AssistantActionCreate,
     AssistantActionOut,
+    AssistantActionUpdate,
     AssistantChatRequest,
     AssistantChatResponse,
     AssistantConversationCreate,
@@ -146,6 +148,57 @@ def _build_product_context(products: list[Product]) -> str:
         "- فقط از قیمت‌های بالا استفاده کن و قیمت جدید نساز.\n"
         "- اگر قیمت نامشخص بود، همین را اعلام کن."
     )
+
+
+def _build_product_url_from_slug(slug: str) -> str | None:
+    slug_value = slug.strip().strip("/")
+    if not slug_value:
+        return None
+    base = settings.SITEMAP_URL or settings.TOROB_PRODUCTS_URL
+    if not base:
+        return None
+    parsed = urlparse(base)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}/product/{slug_value}"
+
+
+async def _prepare_product_action_payload(
+    session: AsyncSession,
+    action_type: str,
+    payload_data: dict,
+) -> dict:
+    if action_type == "product.create" and not payload_data.get("page_url"):
+        slug = payload_data.get("slug")
+        if isinstance(slug, str):
+            page_url = _build_product_url_from_slug(slug)
+            if page_url:
+                payload_data["page_url"] = page_url
+
+    if action_type in {"product.update", "product.delete"} and not payload_data.get("id"):
+        product_id = payload_data.get("product_id")
+        page_url = payload_data.get("page_url")
+        slug = payload_data.get("slug")
+        query = select(Product.id)
+        if product_id:
+            query = query.where(Product.product_id == str(product_id))
+        elif page_url:
+            query = query.where(Product.page_url == str(page_url))
+        elif slug:
+            query = query.where(Product.slug == str(slug))
+        else:
+            return payload_data
+
+        result = await session.execute(query)
+        ids = list(result.scalars().all())
+        if len(ids) == 1:
+            payload_data["id"] = ids[0]
+        elif len(ids) > 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Multiple products match this slug. Provide id or page_url.",
+            )
+    return payload_data
 
 
 async def _require_conversation(
@@ -716,19 +769,20 @@ async def create_action(
 ) -> AssistantActionOut:
     if payload.action_type not in ALLOWED_ACTION_TYPES:
         raise HTTPException(status_code=400, detail="Unsupported action type")
-    if payload.action_type == "product.create":
-        page_url = (payload.payload or {}).get("page_url")
-        if not page_url:
+    payload_data = dict(payload.payload or {})
+    if payload.action_type.startswith("product."):
+        payload_data = await _prepare_product_action_payload(
+            session, payload.action_type, payload_data
+        )
+        if payload.action_type == "product.create" and not payload_data.get("page_url"):
             raise HTTPException(
                 status_code=400,
                 detail="product.create requires page_url. Provide a product URL.",
             )
-    if payload.action_type in {"product.update", "product.delete"}:
-        product_id = (payload.payload or {}).get("id")
-        if not product_id:
+        if payload.action_type in {"product.update", "product.delete"} and not payload_data.get("id"):
             raise HTTPException(
                 status_code=400,
-                detail="product.update/delete requires id.",
+                detail="product.update/delete requires id or a valid product_id/page_url/slug.",
             )
     if payload.action_type in {"faq.update", "faq.delete"}:
         faq_id = (payload.payload or {}).get("id")
@@ -747,9 +801,48 @@ async def create_action(
         status="pending",
         action_type=payload.action_type,
         summary=payload.summary,
-        payload_json=payload.payload or {},
+        payload_json=payload_data,
     )
     session.add(action)
+    await session.commit()
+    await session.refresh(action)
+    return AssistantActionOut.model_validate(action)
+
+
+@router.patch("/actions/{action_id}", response_model=AssistantActionOut)
+async def update_action(
+    action_id: int,
+    payload: AssistantActionUpdate,
+    session: AsyncSession = Depends(get_session),
+    admin=Depends(require_role("admin")),
+) -> AssistantActionOut:
+    action = await session.get(AssistantAction, action_id)
+    if not action:
+        raise HTTPException(status_code=404, detail="Action not found")
+    if action.status != "pending":
+        await session.refresh(action)
+        return AssistantActionOut.model_validate(action)
+
+    if payload.summary is not None:
+        action.summary = payload.summary
+    if payload.payload is not None:
+        payload_data = dict(payload.payload)
+        if action.action_type.startswith("product."):
+            payload_data = await _prepare_product_action_payload(
+                session, action.action_type, payload_data
+            )
+            if action.action_type == "product.create" and not payload_data.get("page_url"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="product.create requires page_url. Provide a product URL.",
+                )
+            if action.action_type in {"product.update", "product.delete"} and not payload_data.get("id"):
+                raise HTTPException(
+                    status_code=400,
+                    detail="product.update/delete requires id or a valid product_id/page_url/slug.",
+                )
+        action.payload_json = payload_data
+
     await session.commit()
     await session.refresh(action)
     return AssistantActionOut.model_validate(action)

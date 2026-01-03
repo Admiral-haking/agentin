@@ -27,9 +27,15 @@ from app.services.guardrails import (
     build_rule_based_plan,
     fallback_for_message_type,
     fallback_llm_text,
+    is_greeting,
     needs_product_details,
     plan_outbound,
     post_process,
+    wants_address,
+    wants_hours,
+    wants_phone,
+    wants_trust,
+    wants_website,
 )
 from app.services.instagram_user_client import (
     InstagramUserClient,
@@ -45,6 +51,13 @@ from app.services.sender import Sender, SenderError
 from app.utils.time import parse_timestamp, utc_now
 
 logger = structlog.get_logger(__name__)
+
+
+def _is_low_signal(text: str | None) -> bool:
+    if not text:
+        return False
+    tokens = [token for token in text.strip().split() if token]
+    return len(tokens) <= 1
 
 SALES_KEYWORDS = {
     "price",
@@ -262,7 +275,9 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 normalized.text,
                 limit=settings.PRODUCT_MATCH_LIMIT,
             )
-            if wants_product_list(normalized.text) and not matched_products:
+            wants_products = wants_product_list(normalized.text)
+            needs_details = needs_product_details((normalized.text or "").lower())
+            if wants_products and not matched_products:
                 result = await session.execute(
                     select(Product)
                     .order_by(Product.updated_at.desc())
@@ -270,11 +285,31 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 )
                 matched_products = list(result.scalars().all())
 
-            if matched_products:
+            if matched_products and (wants_products or needs_details):
                 product_plan = build_product_plan(normalized.text, matched_products)
                 if product_plan:
                     await send_plan_and_store(
                         session, conversation.id, normalized.sender_id, product_plan
+                    )
+                    return
+
+            if normalized.text and _is_low_signal(normalized.text):
+                lowered = normalized.text.strip().lower()
+                if not (
+                    is_greeting(lowered)
+                    or wants_products
+                    or needs_details
+                    or wants_website(lowered)
+                    or wants_address(lowered)
+                    or wants_hours(lowered)
+                    or wants_phone(lowered)
+                    or wants_trust(lowered)
+                ):
+                    await send_and_store(
+                        session,
+                        conversation.id,
+                        normalized.sender_id,
+                        "لطفاً کمی دقیق‌تر بگید تا بهتر راهنمایی کنم 🙏",
                     )
                     return
 
