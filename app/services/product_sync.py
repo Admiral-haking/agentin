@@ -216,6 +216,29 @@ def _normalize_schema_availability(value: Any) -> ProductAvailability | None:
     return None
 
 
+def _infer_availability_from_html(html_text: str) -> ProductAvailability | None:
+    lowered = html_text.lower()
+    out_terms = [
+        "ناموجود",
+        "اتمام موجودی",
+        "موجود نیست",
+        "out of stock",
+        "sold out",
+        "unavailable",
+    ]
+    in_terms = [
+        "موجود",
+        "در انبار",
+        "in stock",
+        "available",
+    ]
+    if any(term in lowered for term in out_terms):
+        return ProductAvailability.outofstock
+    if any(term in lowered for term in in_terms):
+        return ProductAvailability.instock
+    return None
+
+
 def _normalize_images(value: Any, base_url: str | None = None) -> list[str]:
     items: list[str] = []
     if isinstance(value, str):
@@ -225,13 +248,19 @@ def _normalize_images(value: Any, base_url: str | None = None) -> list[str]:
             if isinstance(entry, str):
                 items.append(entry)
             elif isinstance(entry, dict):
-                url = entry.get("url") or entry.get("@id")
-                if isinstance(url, str):
-                    items.append(url)
+                for key in ("url", "contentUrl", "src", "@id"):
+                    url = entry.get(key)
+                    if isinstance(url, str):
+                        items.append(url)
+                nested = entry.get("image") or entry.get("images")
+                items.extend(_normalize_images(nested))
     elif isinstance(value, dict):
-        url = value.get("url") or value.get("@id")
-        if isinstance(url, str):
-            items.append(url)
+        for key in ("url", "contentUrl", "src", "@id"):
+            url = value.get(key)
+            if isinstance(url, str):
+                items.append(url)
+        nested = value.get("image") or value.get("images")
+        items.extend(_normalize_images(nested))
     cleaned: list[str] = []
     for item in items:
         candidate = item.strip() if item else ""
@@ -480,6 +509,8 @@ async def _scrape_product(
                     )
                 if price is not None and availability is not None:
                     break
+        if availability is None:
+            availability = _infer_availability_from_html(html_text)
 
         images = _merge_image_lists(images, None)
         return {
@@ -594,7 +625,11 @@ async def run_product_sync(run_id: int | None = None) -> None:
             for entry in merged.values():
                 product = existing_products.get(entry.page_url)
                 if product:
-                    needs_scrape = not product.title
+                    needs_scrape = not product.title or not product.images
+                    if product.availability == ProductAvailability.unknown:
+                        needs_scrape = True
+                    if product.price is None:
+                        needs_scrape = True
                     if entry.lastmod and product.lastmod and entry.lastmod > product.lastmod:
                         needs_scrape = True
                     entry.should_scrape = needs_scrape
@@ -663,7 +698,10 @@ async def run_product_sync(run_id: int | None = None) -> None:
             if settings.PRODUCT_SCRAPE_ENABLED and scrape_candidates:
                 semaphore = asyncio.Semaphore(settings.PRODUCT_SCRAPE_CONCURRENCY)
                 scrape_limit = settings.PRODUCT_SCRAPE_MAX
-                limited_candidates = scrape_candidates[:scrape_limit]
+                if scrape_limit <= 0:
+                    limited_candidates = scrape_candidates
+                else:
+                    limited_candidates = scrape_candidates[:scrape_limit]
 
                 async with httpx.AsyncClient(
                     timeout=timeout,

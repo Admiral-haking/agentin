@@ -167,6 +167,37 @@ def _build_product_context(products: list[Product]) -> str:
     )
 
 
+def _action_to_out(action: AssistantAction) -> AssistantActionOut:
+    return AssistantActionOut(
+        id=action.id,
+        conversation_id=action.conversation_id,
+        admin_id=action.admin_id,
+        status=action.status,
+        action_type=action.action_type,
+        summary=action.summary,
+        payload_json=action.payload_json,
+        result_json=action.result_json,
+        error=action.error,
+        approved_by=action.approved_by,
+        approved_at=action.approved_at,
+        executed_at=action.executed_at,
+        created_at=action.created_at,
+        updated_at=action.updated_at,
+    )
+
+
+def _extract_slug_from_page_url(page_url: str) -> str | None:
+    cleaned = page_url.strip()
+    if not cleaned:
+        return None
+    path = urlparse(cleaned).path.rstrip("/")
+    if "/product/" in path:
+        return path.split("/product/")[-1] or None
+    if not path:
+        return None
+    return path.split("/")[-1] or None
+
+
 def _build_product_url_from_slug(slug: str) -> str | None:
     slug_value = slug.strip().strip("/")
     if not slug_value:
@@ -185,6 +216,37 @@ async def _prepare_product_action_payload(
     action_type: str,
     payload_data: dict,
 ) -> dict:
+    if not payload_data:
+        return payload_data
+
+    if not payload_data.get("page_url"):
+        for key in ("url", "link"):
+            candidate = payload_data.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                payload_data["page_url"] = candidate.strip()
+                break
+
+    if payload_data.get("page_url") and not payload_data.get("slug"):
+        slug = _extract_slug_from_page_url(str(payload_data.get("page_url")))
+        if slug:
+            payload_data["slug"] = slug
+
+    if not payload_data.get("product_id"):
+        for key in ("model", "sku", "code"):
+            candidate = payload_data.get(key)
+            if candidate:
+                payload_data["product_id"] = str(candidate).strip()
+                break
+
+    if "images" not in payload_data:
+        for key in ("image_url", "image", "photo"):
+            candidate = payload_data.get(key)
+            if candidate:
+                payload_data["images"] = candidate
+                break
+    if "images" in payload_data and not isinstance(payload_data["images"], list):
+        payload_data["images"] = [payload_data["images"]]
+
     if action_type == "product.create" and not payload_data.get("page_url"):
         slug = payload_data.get("slug")
         if isinstance(slug, str):
@@ -774,7 +836,7 @@ async def list_actions(
 
     total = await session.scalar(select(func.count()).select_from(query.subquery()))
     result = await session.execute(query.offset(skip).limit(limit))
-    items = [AssistantActionOut.model_validate(item) for item in result.scalars().all()]
+    items = [_action_to_out(item) for item in result.scalars().all()]
     return list_response(items, total or 0)
 
 
@@ -823,7 +885,7 @@ async def create_action(
     session.add(action)
     await session.commit()
     await session.refresh(action)
-    return AssistantActionOut.model_validate(action)
+    return _action_to_out(action)
 
 
 @router.patch("/actions/{action_id}", response_model=AssistantActionOut)
@@ -838,7 +900,7 @@ async def update_action(
         raise HTTPException(status_code=404, detail="Action not found")
     if action.status != "pending":
         await session.refresh(action)
-        return AssistantActionOut.model_validate(action)
+        return _action_to_out(action)
 
     if payload.summary is not None:
         action.summary = payload.summary
@@ -862,7 +924,7 @@ async def update_action(
 
     await session.commit()
     await session.refresh(action)
-    return AssistantActionOut.model_validate(action)
+    return _action_to_out(action)
 
 
 @router.post("/actions/{action_id}/approve", response_model=AssistantActionOut)
@@ -877,7 +939,7 @@ async def approve_action(
         raise HTTPException(status_code=404, detail="Action not found")
     if action.status != "pending":
         await session.refresh(action)
-        return AssistantActionOut.model_validate(action)
+        return _action_to_out(action)
 
     if action.action_type.startswith("product."):
         payload_data = await _prepare_product_action_payload(
@@ -887,6 +949,18 @@ async def approve_action(
             action.payload_json = payload_data
             await session.commit()
             await session.refresh(action)
+        if action.action_type == "product.create" and not payload_data.get("page_url"):
+            action.status = "failed"
+            action.error = "product.create requires page_url. Provide a product URL."
+            await session.commit()
+            await session.refresh(action)
+            return _action_to_out(action)
+        if action.action_type in {"product.update", "product.delete"} and not payload_data.get("id"):
+            action.status = "failed"
+            action.error = "product.update/delete requires id or a valid product_id/page_url/slug."
+            await session.commit()
+            await session.refresh(action)
+            return _action_to_out(action)
 
     action.status = "approved"
     action.approved_by = admin.id
@@ -901,14 +975,14 @@ async def approve_action(
         action.error = str(exc)
         await session.commit()
         await session.refresh(action)
-        return AssistantActionOut.model_validate(action)
+        return _action_to_out(action)
 
     action.status = "executed"
     action.result_json = result
     action.executed_at = utc_now()
     await session.commit()
     await session.refresh(action)
-    return AssistantActionOut.model_validate(action)
+    return _action_to_out(action)
 
 
 @router.post("/actions/{action_id}/reject", response_model=AssistantActionOut)
@@ -922,13 +996,13 @@ async def reject_action(
         raise HTTPException(status_code=404, detail="Action not found")
     if action.status != "pending":
         await session.refresh(action)
-        return AssistantActionOut.model_validate(action)
+        return _action_to_out(action)
     action.status = "rejected"
     action.approved_by = admin.id
     action.approved_at = utc_now()
     await session.commit()
     await session.refresh(action)
-    return AssistantActionOut.model_validate(action)
+    return _action_to_out(action)
 
 
 @router.get("/export")
@@ -1016,7 +1090,7 @@ async def export_history(
                     action_query = action_query.where(AssistantAction.created_at >= since)
             result = await session.execute(action_query)
             payload["actions"] = [
-                AssistantActionOut.model_validate(item).model_dump(mode="json")
+                _action_to_out(item).model_dump(mode="json")
                 for item in result.scalars().all()
             ]
 

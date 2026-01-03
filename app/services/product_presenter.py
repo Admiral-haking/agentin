@@ -59,9 +59,23 @@ def _normalize_images(value: object | None) -> list[str]:
     if not value:
         return []
     if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
+        images: list[str] = []
+        for item in value:
+            if isinstance(item, str) and item.strip():
+                images.append(item.strip())
+            elif isinstance(item, dict):
+                for key in ("url", "contentUrl", "src", "@id"):
+                    candidate = item.get(key)
+                    if isinstance(candidate, str) and candidate.strip():
+                        images.append(candidate.strip())
+        return images
     if isinstance(value, str):
         return [value.strip()] if value.strip() else []
+    if isinstance(value, dict):
+        for key in ("url", "contentUrl", "src", "@id"):
+            candidate = value.get(key)
+            if isinstance(candidate, str) and candidate.strip():
+                return [candidate.strip()]
     return []
 
 

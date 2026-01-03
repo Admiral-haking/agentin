@@ -11,7 +11,10 @@ PROMPTS_DIR = ROOT_DIR / "app" / "prompts"
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=str(ROOT_DIR / ".env"),
+        env_file_encoding="utf-8",
+    )
 
     APP_ENV: str = "development"
     LOG_LEVEL: str = "INFO"

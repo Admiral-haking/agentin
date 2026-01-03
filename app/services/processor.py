@@ -257,7 +257,15 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 if bot_settings and bot_settings.max_history_messages
                 else settings.MAX_HISTORY_MESSAGES
             )
-            history = await get_recent_history(session, conversation.id, max_history)
+            history_limit = max_history
+            if settings.LLM_MAX_USER_TURNS > 0:
+                history_limit = min(
+                    history_limit, settings.LLM_MAX_USER_TURNS * 2 + 6
+                )
+            history_limit = max(history_limit, 1)
+            history = await get_recent_history(
+                session, conversation.id, history_limit
+            )
             is_first_message = (
                 sum(1 for msg in history if msg.role == "user" and msg.type != "read")
                 <= 1
