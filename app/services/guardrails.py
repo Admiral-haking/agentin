@@ -22,6 +22,15 @@ FALLBACK_AUDIO = "پیام صوتی دریافت شد. لطفاً متن کوت�
 FALLBACK_LLM = (
     "خوشحال می‌شم راهنمایی کنم؛ لطفاً اسم/مدل محصول یا یه عکس بفرستید تا دقیق‌تر کمک کنم."
 )
+GENERIC_FALLBACKS = {
+    "لطفاً کمی دقیق‌تر بگید تا بهتر راهنمایی کنم 🙏",
+    "لطفاً کمی دقیق‌تر بگید تا بهتر راهنمایی کنم",
+    "لطفاً کمی دقیق‌تر بفرمایید.",
+}
+MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+LIST_PREFIX_RE = re.compile(r"^\s*([-*•]|\d+[.)])\s+", re.MULTILINE)
+MULTISPACE_RE = re.compile(r"[ \t]{2,}")
+PUNCT_SPACE_RE = re.compile(r"\s+([،؛:!؟.,])")
 
 GREETING_KEYWORDS = {
     "سلام",
@@ -138,6 +147,9 @@ def post_process(text: str | None, max_chars: int | None = None, fallback_text: 
     cleaned = text.strip()
     if parse_structured_response(cleaned):
         return cleaned
+    cleaned = _sanitize_text(cleaned)
+    if not cleaned or cleaned in GENERIC_FALLBACKS:
+        return fallback_text or FALLBACK_GENERAL
     limit = max_chars or settings.MAX_RESPONSE_CHARS
     if len(cleaned) > limit:
         cleaned = cleaned[:limit].rstrip()
@@ -169,6 +181,16 @@ def _normalize_text(text: str | None) -> str:
     if not text:
         return ""
     return " ".join(text.strip().lower().split())
+
+
+def _sanitize_text(text: str) -> str:
+    cleaned = MARKDOWN_LINK_RE.sub(r"\1: \2", text)
+    cleaned = cleaned.replace("**", "").replace("__", "").replace("`", "")
+    cleaned = LIST_PREFIX_RE.sub("", cleaned)
+    cleaned = PUNCT_SPACE_RE.sub(r"\1", cleaned)
+    cleaned = MULTISPACE_RE.sub(" ", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
 
 
 def _contains_any(text: str, keywords: set[str]) -> bool:

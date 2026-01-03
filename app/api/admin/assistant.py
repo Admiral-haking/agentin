@@ -863,6 +863,18 @@ async def create_action(
                 status_code=400,
                 detail="product.update/delete requires id or a valid product_id/page_url/slug.",
             )
+    if payload.action_type == "faq.create":
+        if not payload_data.get("question") or not payload_data.get("answer"):
+            raise HTTPException(
+                status_code=400,
+                detail="faq.create requires question and answer.",
+            )
+    if payload.action_type == "campaign.create":
+        if not payload_data.get("title") or not payload_data.get("body"):
+            raise HTTPException(
+                status_code=400,
+                detail="campaign.create requires title and body.",
+            )
     if payload.action_type in {"faq.update", "faq.delete"}:
         faq_id = (payload.payload or {}).get("id")
         if not faq_id:
@@ -963,6 +975,22 @@ async def approve_action(
         if action.action_type in {"product.update", "product.delete"} and not payload_data.get("id"):
             action.status = "failed"
             action.error = "product.update/delete requires id or a valid product_id/page_url/slug."
+            await session.commit()
+            await session.refresh(action)
+            return _action_to_out(action)
+    if action.action_type == "faq.create":
+        payload_data = action.payload_json or {}
+        if not payload_data.get("question") or not payload_data.get("answer"):
+            action.status = "failed"
+            action.error = "faq.create requires question and answer."
+            await session.commit()
+            await session.refresh(action)
+            return _action_to_out(action)
+    if action.action_type == "campaign.create":
+        payload_data = action.payload_json or {}
+        if not payload_data.get("title") or not payload_data.get("body"):
+            action.status = "failed"
+            action.error = "campaign.create requires title and body."
             await session.commit()
             await session.refresh(action)
             return _action_to_out(action)

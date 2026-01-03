@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime
 from typing import Any
 
 import structlog
@@ -45,7 +46,11 @@ from app.services.instagram_user_client import (
 from app.services.llm_clients import LLMError, generate_reply
 from app.services.llm_router import choose_provider
 from app.services.order_flow import handle_order_flow
-from app.services.product_matcher import match_products
+from app.services.product_matcher import (
+    match_products,
+    match_products_with_scores,
+    tokenize_query,
+)
 from app.services.product_presenter import build_product_plan, wants_product_list
 from app.services.prompts import load_prompt
 from app.services.sender import Sender, SenderError
@@ -60,6 +65,50 @@ def _is_low_signal(text: str | None) -> bool:
         return False
     tokens = [token for token in text.strip().split() if token]
     return len(tokens) <= 1
+
+
+def _rank_products_by_prefs(
+    products: list[Product],
+    prefs: dict[str, Any] | None,
+) -> list[Product]:
+    if not products or not prefs:
+        return products
+    tokens: list[str] = []
+    for key in ("categories", "gender", "colors"):
+        value = prefs.get(key)
+        if isinstance(value, list):
+            tokens.extend([item for item in value if isinstance(item, str)])
+        elif isinstance(value, str):
+            tokens.append(value)
+    tokens = [token.strip().lower() for token in tokens if token and token.strip()]
+    budget_min = prefs.get("budget_min") if isinstance(prefs.get("budget_min"), int) else None
+    budget_max = prefs.get("budget_max") if isinstance(prefs.get("budget_max"), int) else None
+    if not tokens and budget_min is None and budget_max is None:
+        return products
+    scored: list[tuple[int, datetime, Product]] = []
+    for product in products:
+        haystack = " ".join(
+            part
+            for part in [
+                product.slug,
+                product.title,
+                product.description,
+                product.product_id,
+            ]
+            if part
+        ).lower()
+        score = sum(1 for token in tokens if token in haystack)
+        if product.price is not None and (budget_min is not None or budget_max is not None):
+            if (budget_min is None or product.price >= budget_min) and (
+                budget_max is None or product.price <= budget_max
+            ):
+                score += 1
+        scored.append((score, product.updated_at or datetime.min, product))
+    max_score = max(item[0] for item in scored) if scored else 0
+    if max_score <= 0:
+        return products
+    scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    return [item[2] for item in scored]
 
 SALES_KEYWORDS = {
     "price",
@@ -304,15 +353,27 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 )
                 return
 
-            matched_products = await match_products(
+            tokens = tokenize_query(normalized.text)
+            matches = await match_products_with_scores(
                 session,
                 normalized.text,
                 limit=settings.PRODUCT_MATCH_LIMIT,
             )
+            matched_products = [match.product for match in matches]
+            lowered = (normalized.text or "").strip().lower()
             wants_products = wants_product_list(normalized.text)
-            needs_details = needs_product_details((normalized.text or "").lower())
-            product_intent = wants_product_intent((normalized.text or "").lower())
-            if (wants_products or product_intent) and not matched_products:
+            needs_details = needs_product_details(lowered)
+            product_intent = wants_product_intent(lowered)
+            store_intent = (
+                is_greeting(lowered)
+                or wants_website(lowered)
+                or wants_address(lowered)
+                or wants_hours(lowered)
+                or wants_phone(lowered)
+                or wants_trust(lowered)
+            )
+            is_plain_list_request = wants_products and len(tokens) <= 1
+            if wants_products and not matched_products and is_plain_list_request:
                 result = await session.execute(
                     select(Product)
                     .order_by(Product.updated_at.desc())
@@ -320,7 +381,25 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 )
                 matched_products = list(result.scalars().all())
 
-            if matched_products and (wants_products or needs_details or product_intent):
+            prefs = None
+            if isinstance(user.profile_json, dict):
+                prefs = user.profile_json.get("prefs")
+            matched_products = _rank_products_by_prefs(matched_products, prefs)
+
+            confidence_ok = True
+            if matched_products and tokens:
+                if len(tokens) >= 3 and matches:
+                    confidence_ok = matches[0].score >= len(tokens)
+            if matched_products and (product_intent or needs_details or wants_products) and not confidence_ok:
+                await send_and_store(
+                    session,
+                    conversation.id,
+                    normalized.sender_id,
+                    "برای اینکه اشتباه معرفی نکنم، اسم دقیق مدل یا یه عکس از محصول بفرستید؛ اگر رنگ/سایز مهمه بگید.",
+                )
+                return
+
+            if matched_products and not store_intent and (confidence_ok or is_plain_list_request):
                 product_plan = build_product_plan(normalized.text, matched_products)
                 if product_plan:
                     await send_plan_and_store(
@@ -337,7 +416,6 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 return
 
             if normalized.text and _is_low_signal(normalized.text):
-                lowered = normalized.text.strip().lower()
                 if not (
                     is_greeting(lowered)
                     or wants_products
@@ -352,7 +430,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         session,
                         conversation.id,
                         normalized.sender_id,
-                        "لطفاً کمی دقیق‌تر بگید تا بهتر راهنمایی کنم 🙏",
+                        fallback_for_message_type("text"),
                     )
                     return
 
@@ -377,8 +455,9 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     return
 
             campaigns = await get_active_campaigns(session)
+            matched_products_for_llm = matched_products if confidence_ok else []
             llm_messages = build_llm_messages(
-                history, bot_settings, normalized, user, matched_products
+                history, bot_settings, normalized, user, matched_products_for_llm
             )
             llm_messages = inject_campaigns_and_faqs(llm_messages, campaigns, faqs)
 

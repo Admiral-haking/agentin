@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from datetime import datetime
 
 from sqlalchemy import or_, select
@@ -34,6 +35,12 @@ def _tokenize(text: str) -> list[str]:
         for token in tokens
         if len(token) >= 3 and token not in _STOPWORDS
     ]
+
+
+def tokenize_query(text: str | None) -> list[str]:
+    if not text:
+        return []
+    return _tokenize(text)
 
 
 def _single_token_exact_match(product: Product, token: str) -> bool:
@@ -72,11 +79,42 @@ def _score_product(product: Product, tokens: list[str]) -> int:
     return sum(1 for token in tokens if token in haystack)
 
 
+def _matched_tokens(product: Product, tokens: list[str]) -> list[str]:
+    haystack = " ".join(
+        part
+        for part in [
+            product.slug,
+            product.title,
+            product.description,
+            product.product_id,
+        ]
+        if part
+    ).lower()
+    return [token for token in tokens if token in haystack]
+
+
+@dataclass(frozen=True)
+class ProductMatch:
+    product: Product
+    score: int
+    token_count: int
+    matched_tokens: tuple[str, ...]
+
+
 async def match_products(
     session: AsyncSession,
     text: str | None,
     limit: int | None = None,
 ) -> list[Product]:
+    matches = await match_products_with_scores(session, text, limit=limit)
+    return [match.product for match in matches]
+
+
+async def match_products_with_scores(
+    session: AsyncSession,
+    text: str | None,
+    limit: int | None = None,
+) -> list[ProductMatch]:
     if not settings.PRODUCTS_FEATURE_ENABLED:
         return []
     if not text:
@@ -106,17 +144,26 @@ async def match_products(
     )
     result = await session.execute(query)
     candidates = list(result.scalars().all())
-    scored: list[tuple[int, datetime | None, Product]] = []
+    scored: list[tuple[int, datetime | None, Product, list[str]]] = []
     for product in candidates:
         score = _score_product(product, tokens)
         if score <= 0:
             continue
         if not _meets_threshold(score, tokens, product):
             continue
-        scored.append((score, product.updated_at, product))
+        matched = _matched_tokens(product, tokens)
+        scored.append((score, product.updated_at, product, matched))
 
     scored.sort(
         key=lambda item: (item[0], item[1] or datetime.min), reverse=True
     )
     max_items = limit if limit is not None else settings.PRODUCT_MATCH_LIMIT
-    return [item[2] for item in scored[:max_items]]
+    return [
+        ProductMatch(
+            product=item[2],
+            score=item[0],
+            token_count=len(tokens),
+            matched_tokens=tuple(item[3]),
+        )
+        for item in scored[:max_items]
+    ]

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from app.core.config import settings
 from app.models.product import Product
@@ -55,6 +55,21 @@ def _proxy_image_url(value: str | None) -> str | None:
     return f"{base}/media-proxy?url={encoded}"
 
 
+def _build_product_url(product: Product) -> str | None:
+    if product.page_url:
+        return product.page_url
+    slug = (product.slug or "").strip().strip("/")
+    if not slug:
+        return None
+    base = settings.SITEMAP_URL or settings.TOROB_PRODUCTS_URL
+    if not base:
+        return None
+    parsed = urlparse(base)
+    if not parsed.scheme or not parsed.netloc:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}/product/{slug}"
+
+
 def _normalize_images(value: object | None) -> list[str]:
     if not value:
         return []
@@ -81,9 +96,10 @@ def _normalize_images(value: object | None) -> list[str]:
 
 def _build_product_buttons(product: Product) -> list[Button]:
     buttons: list[Button] = []
-    if product.page_url:
+    product_url = _build_product_url(product)
+    if product_url:
         buttons.append(
-            Button(type="web_url", title="مشاهده محصول", url=product.page_url)
+            Button(type="web_url", title="مشاهده محصول", url=product_url)
         )
     if settings.ORDER_FORM_ENABLED:
         buttons.append(Button(type="postback", title="ثبت سفارش", payload="ثبت سفارش"))
