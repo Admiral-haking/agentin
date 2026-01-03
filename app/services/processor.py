@@ -49,6 +49,7 @@ from app.services.product_matcher import match_products
 from app.services.product_presenter import build_product_plan, wants_product_list
 from app.services.prompts import load_prompt
 from app.services.sender import Sender, SenderError
+from app.services.user_profile import extract_preferences
 from app.utils.time import parse_timestamp, utc_now
 
 logger = structlog.get_logger(__name__)
@@ -271,6 +272,30 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 sum(1 for msg in history if msg.role == "user" and msg.type != "read")
                 <= 1
             )
+
+            if normalized.text:
+                pref_updates = extract_preferences(normalized.text)
+                if pref_updates:
+                    profile = user.profile_json or {}
+                    prefs = profile.get("prefs", {}) if isinstance(profile, dict) else {}
+                    changed = False
+                    for key, value in pref_updates.items():
+                        if value is None:
+                            continue
+                        if isinstance(value, list):
+                            existing = prefs.get(key, [])
+                            merged = list(dict.fromkeys((existing or []) + value))
+                            if merged != existing:
+                                prefs[key] = merged
+                                changed = True
+                        else:
+                            if prefs.get(key) != value:
+                                prefs[key] = value
+                                changed = True
+                    if changed:
+                        profile["prefs"] = prefs
+                        user.profile_json = profile
+                        await session.commit()
 
             order_plan = await handle_order_flow(session, user, normalized.text)
             if order_plan:
@@ -643,6 +668,26 @@ def build_llm_messages(
                 "content": f"User profile: {', '.join(profile_bits)}",
             }
         )
+    if user.profile_json and isinstance(user.profile_json, dict):
+        prefs = user.profile_json.get("prefs")
+        if isinstance(prefs, dict) and prefs:
+            pref_bits = []
+            for key in ("categories", "gender", "sizes", "colors", "budget_min", "budget_max"):
+                value = prefs.get(key)
+                if value is None:
+                    continue
+                if isinstance(value, list):
+                    if value:
+                        pref_bits.append(f"{key}={', '.join(str(item) for item in value)}")
+                else:
+                    pref_bits.append(f"{key}={value}")
+            if pref_bits:
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": f"User preferences: {', '.join(pref_bits)}",
+                    }
+                )
 
     if products:
         product_lines: list[str] = []
