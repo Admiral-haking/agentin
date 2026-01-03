@@ -82,6 +82,27 @@ PRICE_KEYWORDS = {
     "رنگ",
     "مدل",
 }
+PRODUCT_INTENT_KEYWORDS = {
+    "محصول",
+    "محصولات",
+    "کاتالوگ",
+    "لیست",
+    "کالا",
+    "میخوام",
+    "میخواهم",
+    "می‌خوام",
+    "می‌خواهم",
+    "میگردم",
+    "می‌گردم",
+    "دنبال",
+    "دارید",
+    "دارین",
+    "price",
+    "product",
+    "products",
+    "catalog",
+    "list",
+}
 ANGRY_KEYWORDS = {
     "ناراضی",
     "عصبانی",
@@ -155,6 +176,12 @@ def is_greeting(text: str) -> bool:
 
 def needs_product_details(text: str) -> bool:
     return _contains_any(text, PRICE_KEYWORDS)
+
+
+def wants_product_intent(text: str) -> bool:
+    if _contains_any(text, PRICE_KEYWORDS):
+        return True
+    return _contains_any(text, PRODUCT_INTENT_KEYWORDS)
 
 
 def is_angry(text: str) -> bool:

@@ -31,6 +31,7 @@ from app.services.guardrails import (
     needs_product_details,
     plan_outbound,
     post_process,
+    wants_product_intent,
     wants_address,
     wants_hours,
     wants_phone,
@@ -285,7 +286,8 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             )
             wants_products = wants_product_list(normalized.text)
             needs_details = needs_product_details((normalized.text or "").lower())
-            if wants_products and not matched_products:
+            product_intent = wants_product_intent((normalized.text or "").lower())
+            if (wants_products or product_intent) and not matched_products:
                 result = await session.execute(
                     select(Product)
                     .order_by(Product.updated_at.desc())
@@ -293,13 +295,21 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 )
                 matched_products = list(result.scalars().all())
 
-            if matched_products and (wants_products or needs_details):
+            if matched_products and (wants_products or needs_details or product_intent):
                 product_plan = build_product_plan(normalized.text, matched_products)
                 if product_plan:
                     await send_plan_and_store(
                         session, conversation.id, normalized.sender_id, product_plan
                     )
                     return
+            if product_intent and not matched_products:
+                await send_and_store(
+                    session,
+                    conversation.id,
+                    normalized.sender_id,
+                    "برای پیشنهاد دقیق‌تر، نام یا مدل محصول رو بفرستید (یا عکسش رو ارسال کنید).",
+                )
+                return
 
             if normalized.text and _is_low_signal(normalized.text):
                 lowered = normalized.text.strip().lower()
