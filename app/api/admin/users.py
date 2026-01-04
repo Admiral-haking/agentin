@@ -14,6 +14,7 @@ from app.schemas.admin.user import UserImportPayload, UserOut
 from app.services.contacts_importer import (
     parse_csv_contacts,
     parse_json_contacts,
+    merge_profile_json,
     upsert_contacts,
 )
 from app.services.directam_contacts import (
@@ -113,7 +114,7 @@ async def sync_contacts(
             user.follow_status = follow_status or user.follow_status
             if follower_count is not None:
                 user.follower_count = follower_count
-            user.profile_json = contact
+            user.profile_json = merge_profile_json(user.profile_json, contact)
             updated += 1
         else:
             user = User(
@@ -121,7 +122,7 @@ async def sync_contacts(
                 username=username,
                 follow_status=follow_status,
                 follower_count=follower_count,
-                profile_json=contact,
+                profile_json=merge_profile_json(None, contact),
             )
             session.add(user)
             created += 1

@@ -59,6 +59,12 @@ from app.services.product_matcher import (
     tokenize_query,
 )
 from app.services.product_catalog import get_catalog_snapshot
+from app.services.behavior_analyzer import (
+    analyze_user_behavior,
+    build_behavior_context,
+    build_behavior_profile,
+    BehaviorMatch,
+)
 from app.services.product_presenter import build_product_plan, wants_product_list
 from app.services.product_taxonomy import infer_tags
 from app.services.prompts import load_prompt
@@ -332,9 +338,73 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             )
             catalog_snapshot = await get_catalog_snapshot(session)
             catalog_summary = catalog_snapshot.summary if catalog_snapshot else None
+            behavior_match: BehaviorMatch | None = None
+            behavior_summary: dict[str, int] = {}
+            behavior_recent: list[dict[str, Any]] = []
+            behavior_meta: dict[str, Any] | None = None
+            behavior_context: str | None = None
+            def _merge_meta(extra: dict[str, Any] | None) -> dict[str, Any] | None:
+                if behavior_meta is None and not extra:
+                    return None
+                merged: dict[str, Any] = {}
+                if behavior_meta:
+                    merged.update(behavior_meta)
+                if extra:
+                    merged.update(extra)
+                return merged
 
             lowered = (normalized.text or "").strip().lower()
             if normalized.text:
+                behavior_match, behavior_summary, behavior_recent = await analyze_user_behavior(
+                    session,
+                    user.id,
+                    normalized.text,
+                    settings.BEHAVIOR_HISTORY_LIMIT,
+                )
+                profile = user.profile_json if isinstance(user.profile_json, dict) else {}
+                behavior_profile = build_behavior_profile(
+                    behavior_match,
+                    behavior_summary,
+                    behavior_recent,
+                    normalized.text,
+                )
+                if behavior_profile:
+                    profile["behavior"] = behavior_profile
+                    user.profile_json = profile
+                    await session.commit()
+                behavior_context = build_behavior_context(profile.get("behavior"))
+                pattern_payload = {
+                    "pattern": "unknown",
+                    "confidence": 0.0,
+                    "reason": "no_match",
+                    "keywords": [],
+                    "tags": [],
+                }
+                if behavior_match:
+                    behavior_meta = {
+                        "behavior_pattern": behavior_match.pattern,
+                        "behavior_confidence": behavior_match.confidence,
+                    }
+                    pattern_payload = {
+                        "pattern": behavior_match.pattern,
+                        "confidence": behavior_match.confidence,
+                        "reason": behavior_match.reason,
+                        "keywords": list(behavior_match.keywords),
+                        "tags": list(behavior_match.tags),
+                    }
+                await log_event(
+                    session,
+                    level="info",
+                    event_type="pattern_detected",
+                    data={
+                        "user_id": user.id,
+                        "conversation_id": conversation.id,
+                        **pattern_payload,
+                    },
+                    commit=False,
+                )
+                await session.commit()
+
                 store_intent = (
                     is_greeting(lowered)
                     or wants_website(lowered)
@@ -349,7 +419,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         conversation.id,
                         normalized.sender_id,
                         build_thanks_response(),
-                        meta={"source": "guardrails", "intent": "thanks"},
+                        meta=_merge_meta({"source": "guardrails", "intent": "thanks"}),
                     )
                     return
                 if is_decline(lowered):
@@ -358,7 +428,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         conversation.id,
                         normalized.sender_id,
                         build_decline_response(),
-                        meta={"source": "guardrails", "intent": "decline"},
+                        meta=_merge_meta({"source": "guardrails", "intent": "decline"}),
                     )
                     return
                 if is_goodbye(lowered):
@@ -367,7 +437,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         conversation.id,
                         normalized.sender_id,
                         build_goodbye_response(),
-                        meta={"source": "guardrails", "intent": "goodbye"},
+                        meta=_merge_meta({"source": "guardrails", "intent": "goodbye"}),
                     )
                     return
                 if store_intent:
@@ -393,14 +463,18 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                             conversation.id,
                             normalized.sender_id,
                             rule_plan,
-                            meta={
+                            meta=_merge_meta({
                                 "source": "guardrails",
                                 "intent": "store_info",
                                 "store_topic": store_topic,
-                            },
+                            }),
                         )
                         return
 
+            if behavior_context is None and isinstance(user.profile_json, dict):
+                behavior_context = build_behavior_context(user.profile_json.get("behavior"))
+
+            if normalized.text:
                 pref_updates = extract_preferences(normalized.text)
                 if pref_updates:
                     profile = user.profile_json or {}
@@ -431,7 +505,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     conversation.id,
                     normalized.sender_id,
                     order_plan,
-                    meta={"source": "order_flow", "intent": "order_flow"},
+                    meta=_merge_meta({"source": "order_flow", "intent": "order_flow"}),
                 )
                 return
 
@@ -501,13 +575,13 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     conversation.id,
                     normalized.sender_id,
                     "برای اینکه اشتباه معرفی نکنم، اسم دقیق مدل یا یه عکس از محصول بفرستید؛ اگر رنگ/سایز مهمه بگید.",
-                    meta={
+                    meta=_merge_meta({
                         "source": "product_match",
                         "intent": "need_details",
                         "product_ids": matched_product_ids,
                         "product_slugs": matched_product_slugs,
                         "confidence_ok": False,
-                    },
+                    }),
                 )
                 return
 
@@ -519,13 +593,13 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         conversation.id,
                         normalized.sender_id,
                         product_plan,
-                        meta={
+                        meta=_merge_meta({
                             "source": "product_match",
                             "intent": "product_suggest",
                             "product_ids": matched_product_ids,
                             "product_slugs": matched_product_slugs,
                             "confidence_ok": confidence_ok,
-                        },
+                        }),
                     )
                     return
             if product_intent and not matched_products:
@@ -534,7 +608,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     conversation.id,
                     normalized.sender_id,
                     "برای پیشنهاد دقیق‌تر، نام یا مدل محصول رو بفرستید (یا عکسش رو ارسال کنید).",
-                    meta={"source": "product_match", "intent": "no_match"},
+                    meta=_merge_meta({"source": "product_match", "intent": "no_match"}),
                 )
                 return
 
@@ -554,7 +628,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         conversation.id,
                         normalized.sender_id,
                         fallback_for_message_type("text"),
-                        meta={"source": "guardrails", "intent": "low_signal"},
+                        meta=_merge_meta({"source": "guardrails", "intent": "low_signal"}),
                     )
                     return
 
@@ -569,7 +643,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     conversation.id,
                     normalized.sender_id,
                     rule_plan,
-                    meta={"source": "guardrails", "intent": "rule_based"},
+                    meta=_merge_meta({"source": "guardrails", "intent": "rule_based"}),
                 )
                 return
 
@@ -582,7 +656,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         conversation.id,
                         normalized.sender_id,
                         faq_answer,
-                        meta={"source": "faq", "intent": "faq_match"},
+                        meta=_merge_meta({"source": "faq", "intent": "faq_match"}),
                     )
                     return
 
@@ -602,6 +676,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 matched_products_for_llm,
                 catalog_summary=catalog_summary,
                 response_log_summary=response_log_summary,
+                behavior_context=behavior_context,
             )
             llm_messages = inject_campaigns_and_faqs(llm_messages, campaigns, faqs)
 
@@ -674,7 +749,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 conversation.id,
                 normalized.sender_id,
                 reply_text,
-                meta={
+                meta=_merge_meta({
                     "source": "llm",
                     "intent": "llm",
                     "provider": provider_used,
@@ -683,7 +758,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     "product_slugs": matched_product_slugs,
                     "catalog_used": bool(catalog_summary),
                     "response_logs_used": bool(response_log_summary),
-                },
+                }),
             )
         except Exception as exc:
             logger.error("errors", stage="processor", error=str(exc))
@@ -922,6 +997,7 @@ def build_llm_messages(
     products: list[Product] | None = None,
     catalog_summary: str | None = None,
     response_log_summary: str | None = None,
+    behavior_context: str | None = None,
 ) -> list[dict[str, str]]:
     history = _trim_history_for_llm(history, settings.LLM_MAX_USER_TURNS)
     base_prompt = bot_settings.system_prompt if bot_settings else load_prompt("system.txt")
@@ -929,6 +1005,8 @@ def build_llm_messages(
     prompt_parts = [base_prompt, store_knowledge]
     if catalog_summary:
         prompt_parts.append(catalog_summary)
+    if behavior_context:
+        prompt_parts.append(behavior_context)
 
     if message.text:
         lowered = message.text.lower()

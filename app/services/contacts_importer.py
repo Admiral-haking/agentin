@@ -10,6 +10,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.user import User
 
+PROTECTED_PROFILE_KEYS = {"behavior", "prefs"}
+
+
+def merge_profile_json(existing: dict | None, incoming: dict | None) -> dict | None:
+    if incoming is None:
+        return existing
+    if not isinstance(incoming, dict):
+        return incoming if existing is None else existing
+    merged = dict(incoming)
+    if isinstance(existing, dict):
+        for key in PROTECTED_PROFILE_KEYS:
+            if key in existing:
+                merged[key] = existing[key]
+    return merged
+
 
 def _find_key(payload: dict[str, Any], candidates: list[str]) -> str | None:
     for key in candidates:
@@ -89,7 +104,7 @@ async def upsert_contact(
             if follower_count is not None:
                 user.follower_count = follower_count
             if profile_json is not None:
-                user.profile_json = profile_json
+                user.profile_json = merge_profile_json(user.profile_json, profile_json)
             return "updated"
         return "skipped"
 
@@ -98,7 +113,7 @@ async def upsert_contact(
         username=username,
         follow_status=follow_status,
         follower_count=follower_count,
-        profile_json=profile_json,
+        profile_json=merge_profile_json(None, profile_json),
     )
     session.add(user)
     return "created"
