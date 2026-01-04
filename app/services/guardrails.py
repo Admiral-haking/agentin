@@ -31,6 +31,8 @@ MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 LIST_PREFIX_RE = re.compile(r"^\s*([-*•]|\d+[.)])\s+", re.MULTILINE)
 MULTISPACE_RE = re.compile(r"[ \t]{2,}")
 PUNCT_SPACE_RE = re.compile(r"\s+([،؛:!؟.,])")
+PERSIAN_LETTER_RE = re.compile(r"[\u0600-\u06FF]")
+LATIN_LETTER_RE = re.compile(r"[A-Za-z]")
 
 GREETING_KEYWORDS = {
     "سلام",
@@ -187,6 +189,8 @@ def post_process(text: str | None, max_chars: int | None = None, fallback_text: 
     if parse_structured_response(cleaned):
         return cleaned
     cleaned = _sanitize_text(cleaned)
+    if _is_mostly_latin(cleaned):
+        return fallback_text or FALLBACK_GENERAL
     if not cleaned or cleaned in GENERIC_FALLBACKS:
         return fallback_text or FALLBACK_GENERAL
     limit = max_chars or settings.MAX_RESPONSE_CHARS
@@ -234,6 +238,16 @@ def _sanitize_text(text: str) -> str:
     cleaned = MULTISPACE_RE.sub(" ", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
     return cleaned.strip()
+
+
+def _is_mostly_latin(text: str) -> bool:
+    if not text:
+        return False
+    latin_count = len(LATIN_LETTER_RE.findall(text))
+    persian_count = len(PERSIAN_LETTER_RE.findall(text))
+    if latin_count < 10:
+        return False
+    return persian_count < max(3, latin_count // 4)
 
 
 def _contains_any(text: str, keywords: set[str]) -> bool:
