@@ -195,6 +195,8 @@ async def match_products_with_scores(
             product_tags.categories
         ):
             continue
+        if query_tags.genders and not product_tags.genders:
+            continue
         if query_tags.genders and product_tags.genders and not set(query_tags.genders).intersection(
             product_tags.genders
         ):

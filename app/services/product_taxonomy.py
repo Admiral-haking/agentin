@@ -358,6 +358,22 @@ SIZE_KEYWORDS = {
     "free",
 }
 
+_NUMERIC_SIZE_RE = re.compile(r"(?<!\d)([23]\d|4\d|50)(?!\d)")
+_CURRENCY_HINTS = ("تومان", "هزار", "میلیون", "ریال")
+
+
+def _extract_numeric_sizes(normalized: str) -> list[str]:
+    sizes: list[str] = []
+    for match in _NUMERIC_SIZE_RE.finditer(normalized):
+        value = match.group(1)
+        window_start = max(0, match.start() - 8)
+        window_end = min(len(normalized), match.end() + 8)
+        window = normalized[window_start:window_end]
+        if any(hint in window for hint in _CURRENCY_HINTS):
+            continue
+        sizes.append(value)
+    return sizes
+
 
 @dataclass(frozen=True)
 class TagInfo:
@@ -401,6 +417,7 @@ def infer_tags(text: str | None) -> TagInfo:
     for size in SIZE_KEYWORDS:
         if size in normalized:
             sizes.append(size)
+    sizes.extend(_extract_numeric_sizes(normalized))
     if sizes and not genders:
         size_numbers = []
         for size in sizes:

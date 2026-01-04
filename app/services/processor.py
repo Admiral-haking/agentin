@@ -73,6 +73,7 @@ from app.utils.time import parse_timestamp, utc_now
 
 logger = structlog.get_logger(__name__)
 SHOW_PRODUCTS_TOKEN = "[SHOW_PRODUCTS]"
+SHOW_PRODUCTS_TOKEN_ALT = "[GENERIC_TEMPLATE]"
 REQUIRED_FIELD_LABELS = {
     "gender": "جنسیت (آقایون/خانم‌ها/بچگانه)",
     "size": "سایز",
@@ -100,11 +101,16 @@ def _split_show_products(text: str) -> tuple[bool, str]:
     if not text:
         return False, text
     lines = [line.rstrip() for line in text.splitlines()]
-    show_products = any(line.strip() == SHOW_PRODUCTS_TOKEN for line in lines)
+    show_products = any(
+        line.strip() in {SHOW_PRODUCTS_TOKEN, SHOW_PRODUCTS_TOKEN_ALT}
+        for line in lines
+    )
     if not show_products:
         return False, text.strip()
     cleaned = "\n".join(
-        line for line in lines if line.strip() != SHOW_PRODUCTS_TOKEN
+        line
+        for line in lines
+        if line.strip() not in {SHOW_PRODUCTS_TOKEN, SHOW_PRODUCTS_TOKEN_ALT}
     ).strip()
     return True, cleaned
 
@@ -940,8 +946,11 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 )
 
             show_products = False
+            auto_show_products = allow_product_cards
             if llm_first_all and allow_product_cards:
                 show_products, reply_text = _split_show_products(reply_text)
+                if auto_show_products and not show_products:
+                    show_products = True
 
             if order_hint_text:
                 reply_text = order_hint_text
@@ -953,6 +962,9 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             product_plan = None
             if show_products and matched_products:
                 product_plan = build_product_plan(normalized.text, matched_products)
+
+            if show_products and not reply_text:
+                reply_text = "چند پیشنهاد مرتبط برات آماده کردم:"
 
             if reply_text:
                 await send_and_store(

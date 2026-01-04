@@ -80,7 +80,15 @@ def extract_preferences(text: str | None) -> dict[str, Any]:
             break
 
     tags = infer_tags(normalized)
+    if tags.sizes:
+        sizes = list(dict.fromkeys(sizes + list(tags.sizes)))
+    if sizes:
+        updates["sizes"] = list(dict.fromkeys(sizes))
     if tags.categories:
         updates["categories"] = list(tags.categories)
+    if tags.styles:
+        updates["styles"] = list(tags.styles)
+    if tags.materials:
+        updates["materials"] = list(tags.materials)
 
     return updates
