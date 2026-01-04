@@ -13,6 +13,35 @@ from app.core.config import settings
 from app.models.product import Product
 from app.services.product_taxonomy import infer_tags
 
+_ARABIC_FIX = str.maketrans({"ي": "ی", "ك": "ک", "‌": " "})
+
+BRAND_SYNONYMS: dict[str, set[str]] = {
+    "Nike": {"nike", "نایک", "نایکی"},
+    "Adidas": {"adidas", "آدیداس", "ادیداس"},
+    "Puma": {"puma", "پوما"},
+    "Reebok": {"reebok", "ریبوک", "ریباک"},
+    "New Balance": {"new balance", "newbalance", "نیو بالانس", "نیوبالانس"},
+    "Vans": {"vans", "ونس"},
+    "Converse": {"converse", "کانورس"},
+    "Asics": {"asics", "اسیکس"},
+    "Skechers": {"skechers", "اسکچرز", "اسکچر"},
+    "Fila": {"fila", "فیلا"},
+    "Crocs": {"crocs", "کراکس"},
+    "Birkenstock": {"birkenstock", "بیرکن استاک", "بیرکن‌استاک"},
+    "Casio": {"casio", "کاسیو"},
+    "Ajmal": {"ajmal", "اجمل"},
+    "Lattafa": {"lattafa", "لطافه"},
+    "Versace": {"versace", "ورساچه"},
+    "Chanel": {"chanel", "شنل"},
+    "Dior": {"dior", "دیور"},
+    "Gucci": {"gucci", "گوچی"},
+    "Armani": {"armani", "آرمانی"},
+    "Lacoste": {"lacoste", "لاکست"},
+    "Zara": {"zara", "زارا"},
+    "H&M": {"h&m", "hm", "اچ اند ام"},
+    "LC Waikiki": {"lc waikiki", "ال سی وایکیکی", "وایکیکی"},
+}
+
 _CACHE_TS: float = 0.0
 _CACHE_SNAPSHOT: "CatalogSnapshot | None" = None
 
@@ -25,6 +54,9 @@ class CatalogSnapshot:
     gender_counts: dict[str, int]
     style_counts: dict[str, int]
     material_counts: dict[str, int]
+    brand_counts: dict[str, int]
+    size_counts: dict[str, int]
+    category_details: dict[str, dict[str, Any]]
     min_price: int | None
     max_price: int | None
     recent_products: list[dict[str, Any]]
@@ -45,27 +77,83 @@ def _availability_label(value: str | None) -> str:
     return "نامشخص"
 
 
+def _normalize_text(text: str | None) -> str:
+    if not text:
+        return ""
+    value = text.translate(_ARABIC_FIX).lower()
+    value = value.replace("-", " ").replace("_", " ")
+    return " ".join(value.split())
+
+
+def _match_brands(text: str) -> list[str]:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return []
+    tokens = set(normalized.split())
+    matches: list[str] = []
+    for brand, keywords in BRAND_SYNONYMS.items():
+        for keyword in keywords:
+            key = keyword.strip().lower()
+            if not key:
+                continue
+            if " " in key:
+                if key in normalized:
+                    matches.append(brand)
+                    break
+            else:
+                if key in tokens:
+                    matches.append(brand)
+                    break
+    return matches
+
+
 def _build_summary(snapshot: CatalogSnapshot) -> str:
     lines: list[str] = ["[CATALOG]"]
     lines.append(f"تعداد کل محصولات: {snapshot.product_count}")
+    top_categories: list[tuple[str, int]] = []
 
-    def _top_items(counter: dict[str, int], label: str) -> None:
+    def _top_items(counter: dict[str, int], label: str) -> list[tuple[str, int]]:
         if not counter:
-            return
-        top = sorted(counter.items(), key=lambda item: item[1], reverse=True)
-        top = top[: settings.PRODUCT_CATALOG_TOP_CATEGORIES]
+            return []
+        top = sorted(counter.items(), key=lambda item: item[1], reverse=True)[
+            : settings.PRODUCT_CATALOG_TOP_CATEGORIES
+        ]
         joined = "، ".join(f"{name}({count})" for name, count in top)
         lines.append(f"{label}: {joined}")
+        return top
 
-    _top_items(snapshot.category_counts, "دسته‌های پرتکرار")
+    top_categories = _top_items(snapshot.category_counts, "دسته‌های پرتکرار")
     _top_items(snapshot.gender_counts, "جنسیت پرتکرار")
     _top_items(snapshot.style_counts, "سبک پرتکرار")
     _top_items(snapshot.material_counts, "جنس پرتکرار")
+    _top_items(snapshot.brand_counts, "برندهای پرتکرار")
+    _top_items(snapshot.size_counts, "سایزهای پرتکرار")
 
     if snapshot.min_price is not None or snapshot.max_price is not None:
         min_price = _format_price(snapshot.min_price)
         max_price = _format_price(snapshot.max_price)
         lines.append(f"بازه قیمت (محصولات قیمت‌دار): {min_price} تا {max_price}")
+
+    if top_categories:
+        lines.append("جزئیات دسته‌های پرتکرار:")
+        for category, count in top_categories:
+            detail = snapshot.category_details.get(category, {})
+            parts = [f"{category}: {detail.get('count', count)} مورد"]
+            min_price = detail.get("min_price")
+            max_price = detail.get("max_price")
+            if min_price is not None or max_price is not None:
+                parts.append(
+                    f"قیمت: {_format_price(min_price)} تا {_format_price(max_price)}"
+                )
+            sizes = Counter(detail.get("sizes") or {})
+            if sizes:
+                top_sizes = [name for name, _ in sizes.most_common(3)]
+                parts.append(f"سایز پرتکرار: {', '.join(top_sizes)}")
+            brands = Counter(detail.get("brands") or {})
+            if brands:
+                top_brands = [name for name, _ in brands.most_common(3)]
+                parts.append(f"برند پرتکرار: {', '.join(top_brands)}")
+            lines.append("- " + " | ".join(parts))
 
     if snapshot.recent_products:
         lines.append("نمونه‌های به‌روز:")
@@ -89,6 +177,9 @@ async def build_catalog_snapshot(session: AsyncSession) -> CatalogSnapshot:
     gender_counts: Counter[str] = Counter()
     style_counts: Counter[str] = Counter()
     material_counts: Counter[str] = Counter()
+    brand_counts: Counter[str] = Counter()
+    size_counts: Counter[str] = Counter()
+    category_details: dict[str, dict[str, Any]] = {}
 
     min_price: int | None = None
     max_price: int | None = None
@@ -105,10 +196,38 @@ async def build_catalog_snapshot(session: AsyncSession) -> CatalogSnapshot:
             if part
         )
         tags = infer_tags(text)
+        brands = _match_brands(text)
         category_counts.update(tags.categories)
         gender_counts.update(tags.genders)
         style_counts.update(tags.styles)
         material_counts.update(tags.materials)
+        brand_counts.update(brands)
+        size_counts.update(tags.sizes)
+        for category in tags.categories:
+            detail = category_details.setdefault(
+                category,
+                {
+                    "count": 0,
+                    "min_price": None,
+                    "max_price": None,
+                    "sizes": Counter(),
+                    "brands": Counter(),
+                },
+            )
+            detail["count"] += 1
+            if product.price is not None:
+                detail["min_price"] = (
+                    product.price
+                    if detail["min_price"] is None
+                    else min(detail["min_price"], product.price)
+                )
+                detail["max_price"] = (
+                    product.price
+                    if detail["max_price"] is None
+                    else max(detail["max_price"], product.price)
+                )
+            detail["sizes"].update(tags.sizes)
+            detail["brands"].update(brands)
         if product.price is not None:
             min_price = product.price if min_price is None else min(min_price, product.price)
             max_price = product.price if max_price is None else max(max_price, product.price)
@@ -142,6 +261,18 @@ async def build_catalog_snapshot(session: AsyncSession) -> CatalogSnapshot:
         gender_counts=dict(gender_counts),
         style_counts=dict(style_counts),
         material_counts=dict(material_counts),
+        brand_counts=dict(brand_counts),
+        size_counts=dict(size_counts),
+        category_details={
+            category: {
+                "count": detail["count"],
+                "min_price": detail["min_price"],
+                "max_price": detail["max_price"],
+                "sizes": dict(detail["sizes"]),
+                "brands": dict(detail["brands"]),
+            }
+            for category, detail in category_details.items()
+        },
         min_price=min_price,
         max_price=max_price,
         recent_products=recent_products,
