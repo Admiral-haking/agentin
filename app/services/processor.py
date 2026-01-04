@@ -23,7 +23,7 @@ from app.models import (
     Usage,
     User,
 )
-from app.schemas.send import OutboundPlan
+from app.schemas.send import OutboundPlan, QuickReplyOption
 from app.schemas.webhook import NormalizedMessage
 from app.knowledge.store import get_store_knowledge_text
 from app.services.app_log_store import log_event
@@ -125,6 +125,14 @@ def _plan_to_text(plan: OutboundPlan) -> str:
         if lines:
             return "\n".join(lines)
     return fallback_for_message_type("text")
+
+
+def _build_more_products_plan() -> OutboundPlan:
+    return OutboundPlan(
+        type="quick_reply",
+        text="اگر ادامه می‌خواهید بنویسید «ادامه».",
+        quick_replies=[QuickReplyOption(title="ادامه", payload="ادامه")],
+    )
 
 
 def _split_show_products(text: str) -> tuple[bool, str]:
@@ -856,6 +864,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             if product_from_url:
                 matched_products_for_llm = [product_from_url]
                 matched_products = [product_from_url]
+            more_results_available = len(matched_products_for_llm) > len(matched_products)
 
             is_plain_list_request = wants_products and not (
                 query_tags.categories
@@ -962,6 +971,19 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                                 "confidence_ok": confidence_ok,
                             }),
                         )
+                        if (wants_products or is_plain_list_request) and more_results_available:
+                            await send_plan_and_store(
+                                session,
+                                conversation.id,
+                                normalized.sender_id,
+                                _build_more_products_plan(),
+                                meta=_merge_meta({
+                                    "source": "product_match",
+                                    "intent": "product_more",
+                                    "product_ids": matched_product_ids,
+                                    "product_slugs": matched_product_slugs,
+                                }),
+                            )
                         return
                 if product_intent and not matched_products:
                     await send_and_store(
@@ -1221,6 +1243,19 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         "llm_first": llm_first_all,
                     }),
                 )
+                if (wants_products or is_plain_list_request) and more_results_available:
+                    await send_plan_and_store(
+                        session,
+                        conversation.id,
+                        normalized.sender_id,
+                        _build_more_products_plan(),
+                        meta=_merge_meta({
+                            "source": "product_match",
+                            "intent": "product_more",
+                            "product_ids": matched_product_ids,
+                            "product_slugs": matched_product_slugs,
+                        }),
+                    )
         except Exception as exc:
             logger.error("errors", stage="processor", error=str(exc))
             await session.rollback()

@@ -8,14 +8,16 @@ from pydantic import ValidationError
 
 from app.core.config import settings
 from app.knowledge.store import (
+    get_branch_cards,
     get_branches_text,
+    get_contact_links,
     get_contact_text,
     get_hours_text,
     get_phone_text,
     get_trust_text,
     get_website_url,
 )
-from app.schemas.send import Button, OutboundPlan, QuickReplyOption
+from app.schemas.send import Button, OutboundPlan, QuickReplyOption, TemplateElement
 
 FALLBACK_GENERAL = "سلام! برای راهنمایی دقیق‌تر، بگید دنبال چه محصول/دسته‌ای هستید یا بودجه‌تون چقدره؟"
 FALLBACK_MEDIA = "پیام رسانه‌ای دریافت شد. لطفاً توضیح کوتاه متنی بفرستید تا سریع‌تر راهنمایی کنیم."
@@ -380,6 +382,48 @@ def build_contact_response() -> str:
     return get_contact_text()
 
 
+def build_contact_plan() -> OutboundPlan:
+    links = get_contact_links()
+    elements: list[TemplateElement] = []
+    for item in links:
+        title = item.get("title") or "ارتباط"
+        url = item.get("url")
+        if not url:
+            continue
+        elements.append(
+            TemplateElement(
+                title=title,
+                subtitle="برای ارتباط روی دکمه بزنید.",
+                buttons=[Button(type="web_url", title="مشاهده", url=url)],
+            )
+        )
+    if elements:
+        return OutboundPlan(type="generic_template", elements=elements)
+    return OutboundPlan(type="text", text=build_contact_response())
+
+
+def build_branches_plan() -> OutboundPlan:
+    cards = get_branch_cards()
+    elements: list[TemplateElement] = []
+    for item in cards:
+        title = item.get("title") or "شعبه"
+        subtitle = item.get("subtitle") or None
+        url = item.get("url")
+        buttons = []
+        if url:
+            buttons.append(Button(type="web_url", title="نقشه", url=url))
+        elements.append(
+            TemplateElement(
+                title=title,
+                subtitle=subtitle,
+                buttons=buttons[: settings.MAX_BUTTONS],
+            )
+        )
+    if elements:
+        return OutboundPlan(type="generic_template", elements=elements)
+    return OutboundPlan(type="text", text=build_address_response())
+
+
 def build_product_details_question() -> str:
     return (
         "برای اعلام قیمت/موجودی، لطفاً عکس محصول یا نام دقیق + مدل + سایز/رنگ رو بفرستید 😊"
@@ -439,13 +483,13 @@ def build_rule_based_plan(
         return OutboundPlan(type="text", text=build_trust_response())
 
     if wants_contact(normalized):
-        return OutboundPlan(type="text", text=build_contact_response())
+        return build_contact_plan()
 
     if wants_website(normalized):
         return build_website_plan()
 
     if wants_address(normalized):
-        return OutboundPlan(type="text", text=build_address_response())
+        return build_branches_plan()
 
     if wants_hours(normalized):
         return OutboundPlan(type="text", text=build_hours_response())

@@ -180,6 +180,33 @@ def get_contact_text() -> str:
     return "\n".join(part for part in parts if part)
 
 
+def get_contact_links() -> list[dict[str, str]]:
+    socials = STORE_KNOWLEDGE.get("socials", {})
+    phone = STORE_KNOWLEDGE["map_listing"].get("phone")
+    links = [
+        {"title": "تماس تلفنی", "url": f"tel:{phone}"} if phone else {},
+        {"title": "واتساپ", "url": socials.get("whatsapp", "")},
+        {"title": "اینستاگرام", "url": socials.get("instagram", "")},
+        {"title": "اینستاگرام دوم", "url": socials.get("instagram2", "")},
+        {"title": "تلگرام", "url": socials.get("telegram", "")},
+        {"title": "وب‌سایت", "url": f"https://{STORE_KNOWLEDGE['website']}"},
+    ]
+    return [item for item in links if item.get("url")]
+
+
+def get_branch_cards() -> list[dict[str, str]]:
+    cards: list[dict[str, str]] = []
+    for branch in STORE_KNOWLEDGE["branches"]:
+        cards.append(
+            {
+                "title": f"شعبه {branch['name']}",
+                "subtitle": branch.get("address", ""),
+                "url": branch.get("map_url", ""),
+            }
+        )
+    return cards
+
+
 def get_website_url() -> str:
     return f"https://{STORE_KNOWLEDGE['website']}"
 
