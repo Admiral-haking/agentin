@@ -21,6 +21,7 @@ from app.core.database import AsyncSessionLocal
 from app.models.product import Product, ProductAvailability
 from app.models.product_sync_run import ProductSyncRun
 from app.services.app_log_store import log_event
+from app.services.product_catalog import refresh_catalog_snapshot
 from app.utils.time import utc_now
 
 logger = structlog.get_logger(__name__)
@@ -790,6 +791,10 @@ async def run_product_sync(run_id: int | None = None) -> None:
                 commit=False,
             )
             await session.commit()
+            try:
+                await refresh_catalog_snapshot(session)
+            except Exception as exc:
+                logger.warning("catalog_snapshot_failed", error=str(exc))
         except Exception as exc:
             logger.exception("product_sync_failed", error=str(exc))
             run.status = "failed"

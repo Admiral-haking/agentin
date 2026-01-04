@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 
 import structlog
-from sqlalchemy import select
+from sqlalchemy import Integer, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
@@ -16,6 +16,7 @@ from app.models import (
     Conversation,
     Faq,
     Message,
+    AppLog,
     Product,
     Usage,
     User,
@@ -57,6 +58,7 @@ from app.services.product_matcher import (
     match_products_with_scores,
     tokenize_query,
 )
+from app.services.product_catalog import get_catalog_snapshot
 from app.services.product_presenter import build_product_plan, wants_product_list
 from app.services.product_taxonomy import infer_tags
 from app.services.prompts import load_prompt
@@ -328,6 +330,8 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 sum(1 for msg in history if msg.role == "user" and msg.type != "read")
                 <= 1
             )
+            catalog_snapshot = await get_catalog_snapshot(session)
+            catalog_summary = catalog_snapshot.summary if catalog_snapshot else None
 
             lowered = (normalized.text or "").strip().lower()
             if normalized.text:
@@ -345,6 +349,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         conversation.id,
                         normalized.sender_id,
                         build_thanks_response(),
+                        meta={"source": "guardrails", "intent": "thanks"},
                     )
                     return
                 if is_decline(lowered):
@@ -353,6 +358,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         conversation.id,
                         normalized.sender_id,
                         build_decline_response(),
+                        meta={"source": "guardrails", "intent": "decline"},
                     )
                     return
                 if is_goodbye(lowered):
@@ -361,9 +367,21 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         conversation.id,
                         normalized.sender_id,
                         build_goodbye_response(),
+                        meta={"source": "guardrails", "intent": "goodbye"},
                     )
                     return
                 if store_intent:
+                    store_topic = None
+                    if wants_hours(lowered):
+                        store_topic = "hours"
+                    elif wants_address(lowered):
+                        store_topic = "address"
+                    elif wants_phone(lowered):
+                        store_topic = "phone"
+                    elif wants_website(lowered):
+                        store_topic = "website"
+                    elif wants_trust(lowered):
+                        store_topic = "trust"
                     rule_plan = build_rule_based_plan(
                         normalized.message_type,
                         normalized.text,
@@ -371,7 +389,15 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     )
                     if rule_plan:
                         await send_plan_and_store(
-                            session, conversation.id, normalized.sender_id, rule_plan
+                            session,
+                            conversation.id,
+                            normalized.sender_id,
+                            rule_plan,
+                            meta={
+                                "source": "guardrails",
+                                "intent": "store_info",
+                                "store_topic": store_topic,
+                            },
                         )
                         return
 
@@ -401,7 +427,11 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             order_plan = await handle_order_flow(session, user, normalized.text)
             if order_plan:
                 await send_plan_and_store(
-                    session, conversation.id, normalized.sender_id, order_plan
+                    session,
+                    conversation.id,
+                    normalized.sender_id,
+                    order_plan,
+                    meta={"source": "order_flow", "intent": "order_flow"},
                 )
                 return
 
@@ -458,6 +488,8 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             if isinstance(user.profile_json, dict):
                 prefs = user.profile_json.get("prefs")
             matched_products = _rank_products_by_prefs(matched_products, prefs)
+            matched_product_ids = [product.id for product in matched_products]
+            matched_product_slugs = [product.slug for product in matched_products if product.slug]
 
             confidence_ok = True
             if matched_products and tokens:
@@ -469,6 +501,13 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     conversation.id,
                     normalized.sender_id,
                     "برای اینکه اشتباه معرفی نکنم، اسم دقیق مدل یا یه عکس از محصول بفرستید؛ اگر رنگ/سایز مهمه بگید.",
+                    meta={
+                        "source": "product_match",
+                        "intent": "need_details",
+                        "product_ids": matched_product_ids,
+                        "product_slugs": matched_product_slugs,
+                        "confidence_ok": False,
+                    },
                 )
                 return
 
@@ -476,7 +515,17 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 product_plan = build_product_plan(normalized.text, matched_products)
                 if product_plan:
                     await send_plan_and_store(
-                        session, conversation.id, normalized.sender_id, product_plan
+                        session,
+                        conversation.id,
+                        normalized.sender_id,
+                        product_plan,
+                        meta={
+                            "source": "product_match",
+                            "intent": "product_suggest",
+                            "product_ids": matched_product_ids,
+                            "product_slugs": matched_product_slugs,
+                            "confidence_ok": confidence_ok,
+                        },
                     )
                     return
             if product_intent and not matched_products:
@@ -485,6 +534,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     conversation.id,
                     normalized.sender_id,
                     "برای پیشنهاد دقیق‌تر، نام یا مدل محصول رو بفرستید (یا عکسش رو ارسال کنید).",
+                    meta={"source": "product_match", "intent": "no_match"},
                 )
                 return
 
@@ -504,6 +554,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         conversation.id,
                         normalized.sender_id,
                         fallback_for_message_type("text"),
+                        meta={"source": "guardrails", "intent": "low_signal"},
                     )
                     return
 
@@ -514,7 +565,11 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             )
             if rule_plan:
                 await send_plan_and_store(
-                    session, conversation.id, normalized.sender_id, rule_plan
+                    session,
+                    conversation.id,
+                    normalized.sender_id,
+                    rule_plan,
+                    meta={"source": "guardrails", "intent": "rule_based"},
                 )
                 return
 
@@ -523,14 +578,30 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 faq_answer = match_faq(normalized.text, faqs)
                 if faq_answer:
                     await send_and_store(
-                        session, conversation.id, normalized.sender_id, faq_answer
+                        session,
+                        conversation.id,
+                        normalized.sender_id,
+                        faq_answer,
+                        meta={"source": "faq", "intent": "faq_match"},
                     )
                     return
 
             campaigns = await get_active_campaigns(session)
             matched_products_for_llm = matched_products if confidence_ok else []
+            response_logs = await get_recent_response_logs(
+                session,
+                conversation.id,
+                settings.RESPONSE_LOG_CONTEXT_LIMIT,
+            )
+            response_log_summary = build_response_log_summary(response_logs)
             llm_messages = build_llm_messages(
-                history, bot_settings, normalized, user, matched_products_for_llm
+                history,
+                bot_settings,
+                normalized,
+                user,
+                matched_products_for_llm,
+                catalog_summary=catalog_summary,
+                response_log_summary=response_log_summary,
             )
             llm_messages = inject_campaigns_and_faqs(llm_messages, campaigns, faqs)
 
@@ -546,6 +617,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 commit=False,
             )
             start_time = time.monotonic()
+            provider_used = None
 
             try:
                 reply_text, usage, provider_used = await generate_with_fallback(
@@ -597,7 +669,22 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     else fallback_llm_text()
                 )
 
-            await send_and_store(session, conversation.id, normalized.sender_id, reply_text)
+            await send_and_store(
+                session,
+                conversation.id,
+                normalized.sender_id,
+                reply_text,
+                meta={
+                    "source": "llm",
+                    "intent": "llm",
+                    "provider": provider_used,
+                    "product_context_count": len(matched_products_for_llm),
+                    "product_ids": matched_product_ids,
+                    "product_slugs": matched_product_slugs,
+                    "catalog_used": bool(catalog_summary),
+                    "response_logs_used": bool(response_log_summary),
+                },
+            )
         except Exception as exc:
             logger.error("errors", stage="processor", error=str(exc))
             await session.rollback()
@@ -704,6 +791,49 @@ async def get_recent_history(
     return messages
 
 
+async def get_recent_response_logs(
+    session: AsyncSession,
+    conversation_id: int,
+    limit: int,
+) -> list[AppLog]:
+    if limit <= 0:
+        return []
+    result = await session.execute(
+        select(AppLog)
+        .where(AppLog.event_type == "assistant_response")
+        .where(cast(AppLog.data["conversation_id"].astext, Integer) == conversation_id)
+        .order_by(AppLog.created_at.desc())
+        .limit(limit)
+    )
+    logs = list(result.scalars().all())
+    logs.reverse()
+    return logs
+
+
+def build_response_log_summary(logs: list[AppLog]) -> str | None:
+    if not logs:
+        return None
+    lines: list[str] = []
+    for log in logs:
+        message = (log.message or "").strip()
+        if not message:
+            continue
+        data = log.data or {}
+        source = data.get("source", "reply")
+        intent = data.get("intent")
+        tag = source if not intent else f"{source}/{intent}"
+        snippet = " ".join(message.split())
+        if len(snippet) > settings.LLM_MESSAGE_MAX_CHARS:
+            snippet = snippet[: settings.LLM_MESSAGE_MAX_CHARS].rstrip() + "..."
+        lines.append(f"- [{tag}] {snippet}")
+    if not lines:
+        return None
+    summary = "[RECENT_RESPONSES]\n" + "\n".join(lines)
+    if len(summary) > settings.LLM_MESSAGE_MAX_CHARS:
+        summary = summary[: settings.LLM_MESSAGE_MAX_CHARS].rstrip() + "..."
+    return summary
+
+
 def _trim_history_for_llm(
     history: list[Message], max_user_turns: int
 ) -> list[Message]:
@@ -790,11 +920,15 @@ def build_llm_messages(
     message: NormalizedMessage,
     user: User,
     products: list[Product] | None = None,
+    catalog_summary: str | None = None,
+    response_log_summary: str | None = None,
 ) -> list[dict[str, str]]:
     history = _trim_history_for_llm(history, settings.LLM_MAX_USER_TURNS)
     base_prompt = bot_settings.system_prompt if bot_settings else load_prompt("system.txt")
     store_knowledge = get_store_knowledge_text()
     prompt_parts = [base_prompt, store_knowledge]
+    if catalog_summary:
+        prompt_parts.append(catalog_summary)
 
     if message.text:
         lowered = message.text.lower()
@@ -813,6 +947,8 @@ def build_llm_messages(
 
     system_prompt = "\n\n".join(part for part in prompt_parts if part).strip()
     messages: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
+    if response_log_summary:
+        messages.append({"role": "system", "content": response_log_summary})
     if profile_bits:
         messages.append(
             {
@@ -955,9 +1091,10 @@ async def send_and_store(
     conversation_id: int,
     receiver_id: str,
     text: str,
+    meta: dict | None = None,
 ) -> None:
     plan = plan_outbound(text)
-    await send_plan_and_store(session, conversation_id, receiver_id, plan)
+    await send_plan_and_store(session, conversation_id, receiver_id, plan, meta=meta)
 
 
 async def send_plan_and_store(
@@ -965,6 +1102,7 @@ async def send_plan_and_store(
     conversation_id: int,
     receiver_id: str,
     plan: OutboundPlan,
+    meta: dict | None = None,
 ) -> str | None:
     def _plan_to_text(value: OutboundPlan) -> str:
         if value.text:
@@ -1092,6 +1230,23 @@ async def send_plan_and_store(
             },
             commit=False,
         )
+        response_meta = {
+            "receiver_id": receiver_id,
+            "conversation_id": conversation_id,
+            "message_type": plan.type,
+            "message_id": message_id,
+            "source": "unspecified",
+        }
+        if meta:
+            response_meta.update(meta)
+        await log_event(
+            session,
+            level="info",
+            event_type="assistant_response",
+            message=plan.text,
+            data=response_meta,
+            commit=False,
+        )
     except SenderError as exc:
         logger.error("errors", stage="send", error=str(exc))
         await log_event(
@@ -1127,6 +1282,23 @@ async def send_plan_and_store(
                 "message_type": "text_fallback",
                 "message_id": message_id,
             },
+            commit=False,
+        )
+        response_meta = {
+            "receiver_id": receiver_id,
+            "conversation_id": conversation_id,
+            "message_type": "text_fallback",
+            "message_id": message_id,
+            "source": "unspecified",
+        }
+        if meta:
+            response_meta.update(meta)
+        await log_event(
+            session,
+            level="info",
+            event_type="assistant_response",
+            message=fallback_text,
+            data=response_meta,
             commit=False,
         )
         plan = OutboundPlan(type="text", text=fallback_text)
