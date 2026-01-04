@@ -486,11 +486,13 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     settings.BEHAVIOR_HISTORY_LIMIT,
                 )
                 profile = user.profile_json if isinstance(user.profile_json, dict) else {}
+                previous_behavior = profile.get("behavior") if isinstance(profile, dict) else None
                 behavior_profile = build_behavior_profile(
                     behavior_match,
                     behavior_summary,
                     behavior_recent,
                     normalized.text,
+                    previous=previous_behavior if isinstance(previous_behavior, dict) else None,
                 )
                 if behavior_profile:
                     profile["behavior"] = behavior_profile

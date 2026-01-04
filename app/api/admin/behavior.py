@@ -21,13 +21,16 @@ def _extract_behavior(user: User) -> UserBehaviorOut:
         raw_behavior = user.profile_json.get("behavior")
         if isinstance(raw_behavior, dict):
             behavior = raw_behavior
+    updated_at = _parse_dt(behavior.get("updated_at"))
+    if updated_at is None:
+        updated_at = user.updated_at
     return UserBehaviorOut(
         id=user.id,
         external_id=user.external_id,
         username=user.username,
         last_pattern=behavior.get("last_pattern"),
         confidence=behavior.get("confidence"),
-        updated_at=_parse_dt(behavior.get("updated_at")),
+        updated_at=updated_at,
         last_reason=behavior.get("last_reason"),
         last_message=behavior.get("last_message"),
         summary=behavior.get("summary"),

@@ -192,6 +192,7 @@ def build_behavior_context(behavior: dict | None) -> str | None:
     confidence = behavior.get("confidence")
     updated_at = behavior.get("updated_at")
     last_reason = behavior.get("last_reason")
+    last_message = behavior.get("last_message")
     summary = behavior.get("summary") or {}
     recent = behavior.get("recent") or []
     lines = ["[BEHAVIOR]"]
@@ -201,6 +202,8 @@ def build_behavior_context(behavior: dict | None) -> str | None:
         lines.append(f"آخرین بروزرسانی: {updated_at}")
     if last_reason:
         lines.append(f"دلیل: {last_reason}")
+    if last_message:
+        lines.append(f"آخرین پیام: {last_message}")
     if summary:
         top = sorted(summary.items(), key=lambda item: item[1], reverse=True)[:5]
         lines.append("خلاصه رفتار: " + "، ".join(f"{k}({v})" for k, v in top))
@@ -262,19 +265,19 @@ def build_behavior_profile(
     summary_counts: dict[str, int],
     recent_payload: list[dict[str, Any]],
     last_message: str | None,
+    previous: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    payload: dict[str, Any] = {
-        "summary": summary_counts,
-        "recent": recent_payload,
-    }
+    payload: dict[str, Any] = dict(previous or {})
+    payload["summary"] = summary_counts
+    payload["recent"] = recent_payload
+    payload["updated_at"] = utc_now().isoformat()
+    payload["last_message"] = (last_message or "")[:500]
     if match:
         payload.update(
             {
                 "last_pattern": match.pattern,
                 "confidence": match.confidence,
                 "last_reason": match.reason,
-                "updated_at": utc_now().isoformat(),
-                "last_message": (last_message or "")[:500],
             }
         )
     return payload

@@ -158,6 +158,9 @@ export const UserBehaviorPage = () => {
               <Button variant="contained" onClick={handleApplyFilters} disabled={loading}>
                 اعمال فیلتر
               </Button>
+              <Button variant="outlined" onClick={loadData} disabled={loading}>
+                بروزرسانی
+              </Button>
               <Button variant="outlined" onClick={handleClearFilters} disabled={loading}>
                 پاک کردن
               </Button>
@@ -196,6 +199,7 @@ export const UserBehaviorPage = () => {
                   <TableCell>الگوی اخیر</TableCell>
                   <TableCell>اعتماد</TableCell>
                   <TableCell>به‌روزرسانی</TableCell>
+                  <TableCell>آخرین پیام</TableCell>
                   <TableCell>دلیل</TableCell>
                   <TableCell>خلاصه</TableCell>
                   <TableCell>نمونه‌ها</TableCell>
@@ -221,6 +225,7 @@ export const UserBehaviorPage = () => {
                     </TableCell>
                     <TableCell>{item.confidence ?? '-'}</TableCell>
                     <TableCell>{formatTime(item.updated_at)}</TableCell>
+                    <TableCell>{item.last_message || '-'}</TableCell>
                     <TableCell>{item.last_reason || '-'}</TableCell>
                     <TableCell>{buildSummaryText(item.summary)}</TableCell>
                     <TableCell>{buildRecentText(item.recent)}</TableCell>
@@ -228,7 +233,7 @@ export const UserBehaviorPage = () => {
                 ))}
                 {!items.length && !loading && (
                   <TableRow>
-                    <TableCell colSpan={7}>
+                    <TableCell colSpan={8}>
                       <Typography variant="body2" color="text.secondary">
                         داده‌ای برای نمایش وجود ندارد.
                       </Typography>
