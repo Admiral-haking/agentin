@@ -17,6 +17,7 @@ from app.services.product_taxonomy import (
     STYLE_SYNONYMS,
     expand_query_terms,
     infer_tags,
+    match_brands,
 )
 
 _TOKEN_RE = re.compile(r"[\w\u0600-\u06FF]+", re.UNICODE)
@@ -136,6 +137,7 @@ class ProductMatch:
     token_count: int
     matched_tokens: tuple[str, ...]
     matched_tags: tuple[str, ...]
+    matched_brands: tuple[str, ...]
 
 
 async def match_products(
@@ -156,6 +158,7 @@ async def match_products_with_scores(
         return []
     if not text:
         return []
+    query_brands = match_brands(text)
     query_tags = infer_tags(text)
     raw_tokens = _tokenize(text)
     content_tokens = _content_tokens(raw_tokens)
@@ -222,6 +225,7 @@ async def match_products_with_scores(
             if part
         )
         product_tags = infer_tags(product_text)
+        product_brands = match_brands(product_text)
         if query_tags.categories and not set(query_tags.categories).intersection(
             product_tags.categories
         ):
@@ -240,6 +244,8 @@ async def match_products_with_scores(
             product_tags.styles
         ):
             continue
+        if query_brands and not set(query_brands).intersection(product_brands):
+            continue
 
         token_score = _score_product(product, tokens)
         matched_tags: list[str] = []
@@ -253,16 +259,20 @@ async def match_products_with_scores(
         ):
             for value in values:
                 matched_tags.append(f"{label}:{value}")
+        matched_brands = sorted(set(query_brands).intersection(product_brands))
+        for brand in matched_brands:
+            matched_tags.append(f"brd:{brand}")
         tag_bonus = len(matched_tags)
-        if token_score <= 0 and tag_bonus <= 0:
+        brand_bonus = len(matched_brands)
+        if token_score <= 0 and tag_bonus <= 0 and not matched_brands:
             continue
         if token_score > 0 and not _meets_threshold(token_score, tokens, product):
             continue
-        if token_score <= 0 and len(tokens) >= 2 and tag_bonus < 2:
+        if token_score <= 0 and len(tokens) >= 2 and (tag_bonus + brand_bonus) < 2:
             continue
-        score = token_score + tag_bonus
+        score = token_score + tag_bonus + brand_bonus
         matched = _matched_tokens(product, tokens)
-        scored.append((score, product.updated_at, product, matched, matched_tags))
+        scored.append((score, product.updated_at, product, matched, matched_tags, matched_brands))
 
     scored.sort(
         key=lambda item: (item[0], item[1] or datetime.min), reverse=True
@@ -275,6 +285,7 @@ async def match_products_with_scores(
             token_count=len(tokens),
             matched_tokens=tuple(item[3]),
             matched_tags=tuple(item[4]),
+            matched_brands=tuple(item[5]),
         )
         for item in scored[:max_items]
     ]

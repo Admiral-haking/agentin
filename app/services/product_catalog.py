@@ -11,36 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.product import Product
-from app.services.product_taxonomy import infer_tags
-
-_ARABIC_FIX = str.maketrans({"ي": "ی", "ك": "ک", "‌": " "})
-
-BRAND_SYNONYMS: dict[str, set[str]] = {
-    "Nike": {"nike", "نایک", "نایکی"},
-    "Adidas": {"adidas", "آدیداس", "ادیداس"},
-    "Puma": {"puma", "پوما"},
-    "Reebok": {"reebok", "ریبوک", "ریباک"},
-    "New Balance": {"new balance", "newbalance", "نیو بالانس", "نیوبالانس"},
-    "Vans": {"vans", "ونس"},
-    "Converse": {"converse", "کانورس"},
-    "Asics": {"asics", "اسیکس"},
-    "Skechers": {"skechers", "اسکچرز", "اسکچر"},
-    "Fila": {"fila", "فیلا"},
-    "Crocs": {"crocs", "کراکس"},
-    "Birkenstock": {"birkenstock", "بیرکن استاک", "بیرکن‌استاک"},
-    "Casio": {"casio", "کاسیو"},
-    "Ajmal": {"ajmal", "اجمل"},
-    "Lattafa": {"lattafa", "لطافه"},
-    "Versace": {"versace", "ورساچه"},
-    "Chanel": {"chanel", "شنل"},
-    "Dior": {"dior", "دیور"},
-    "Gucci": {"gucci", "گوچی"},
-    "Armani": {"armani", "آرمانی"},
-    "Lacoste": {"lacoste", "لاکست"},
-    "Zara": {"zara", "زارا"},
-    "H&M": {"h&m", "hm", "اچ اند ام"},
-    "LC Waikiki": {"lc waikiki", "ال سی وایکیکی", "وایکیکی"},
-}
+from app.services.product_taxonomy import infer_tags, match_brands
 
 _CACHE_TS: float = 0.0
 _CACHE_SNAPSHOT: "CatalogSnapshot | None" = None
@@ -77,34 +48,6 @@ def _availability_label(value: str | None) -> str:
     return "نامشخص"
 
 
-def _normalize_text(text: str | None) -> str:
-    if not text:
-        return ""
-    value = text.translate(_ARABIC_FIX).lower()
-    value = value.replace("-", " ").replace("_", " ")
-    return " ".join(value.split())
-
-
-def _match_brands(text: str) -> list[str]:
-    normalized = _normalize_text(text)
-    if not normalized:
-        return []
-    tokens = set(normalized.split())
-    matches: list[str] = []
-    for brand, keywords in BRAND_SYNONYMS.items():
-        for keyword in keywords:
-            key = keyword.strip().lower()
-            if not key:
-                continue
-            if " " in key:
-                if key in normalized:
-                    matches.append(brand)
-                    break
-            else:
-                if key in tokens:
-                    matches.append(brand)
-                    break
-    return matches
 
 
 def _build_summary(snapshot: CatalogSnapshot) -> str:
@@ -196,7 +139,7 @@ async def build_catalog_snapshot(session: AsyncSession) -> CatalogSnapshot:
             if part
         )
         tags = infer_tags(text)
-        brands = _match_brands(text)
+        brands = match_brands(text)
         category_counts.update(tags.categories)
         gender_counts.update(tags.genders)
         style_counts.update(tags.styles)

@@ -48,12 +48,14 @@ GREETING_KEYWORDS = {
 ADDRESS_KEYWORDS = {
     "آدرس",
     "شعبه",
+    "شعبات",
     "لوکیشن",
     "مکان",
     "کجا هستین",
     "کجاست",
     "نشان",
     "نقشه",
+    "نشانی",
 }
 HOURS_KEYWORDS = {
     "ساعت کاری",
@@ -63,6 +65,8 @@ HOURS_KEYWORDS = {
     "باز هستین",
     "باز هستید",
     "تایم",
+    "ساعت باز",
+    "ساعت بسته",
 }
 PHONE_KEYWORDS = {
     "تلفن",
@@ -79,6 +83,10 @@ CONTACT_KEYWORDS = {
     "ارتباط با",
     "پشتیبانی",
     "راه ارتباط",
+    "پیج",
+    "اینستاگرام",
+    "واتساپ",
+    "تلگرام",
 }
 WEBSITE_KEYWORDS = {
     "سایت",
@@ -105,6 +113,9 @@ PRICE_KEYWORDS = {
     "سایز",
     "رنگ",
     "مدل",
+    "بودجه",
+    "ارزان",
+    "گرون",
 }
 PRODUCT_INTENT_KEYWORDS = {
     "محصول",
@@ -112,6 +123,9 @@ PRODUCT_INTENT_KEYWORDS = {
     "کاتالوگ",
     "لیست",
     "کالا",
+    "ویترین",
+    "گالری",
+    "نمونه",
     "چی دارید",
     "چی داری",
     "پیشنهاد",
@@ -121,6 +135,21 @@ PRODUCT_INTENT_KEYWORDS = {
     "دسته‌بندی",
     "منو",
     "کالکشن",
+    "مدل ها",
+    "مدل‌ها",
+    "کفش",
+    "صندل",
+    "دمپایی",
+    "عطر",
+    "ادکلن",
+    "کیف",
+    "لباس",
+    "پوشاک",
+    "اکسسوری",
+    "آرایشی",
+    "بهداشتی",
+    "جوراب",
+    "شال",
     "price",
     "product",
     "products",
@@ -128,6 +157,14 @@ PRODUCT_INTENT_KEYWORDS = {
     "list",
     "category",
     "collection",
+}
+CONTINUE_KEYWORDS = {
+    "ادامه",
+    "بیشتر",
+    "بعدی",
+    "صفحه بعد",
+    "موارد بیشتر",
+    "نمایش بیشتر",
 }
 ANGRY_KEYWORDS = {
     "ناراضی",
@@ -320,6 +357,20 @@ def wants_phone(text: str) -> bool:
 
 def wants_contact(text: str) -> bool:
     return _contains_any(text, CONTACT_KEYWORDS)
+
+
+def wants_more_products(text: str) -> bool:
+    if _contains_any(
+        text,
+        CONTACT_KEYWORDS
+        | WEBSITE_KEYWORDS
+        | ADDRESS_KEYWORDS
+        | HOURS_KEYWORDS
+        | PHONE_KEYWORDS
+        | TRUST_KEYWORDS,
+    ):
+        return False
+    return _contains_any(text, CONTINUE_KEYWORDS)
 
 
 def wants_trust(text: str) -> bool:

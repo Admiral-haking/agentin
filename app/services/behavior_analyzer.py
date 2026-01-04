@@ -12,12 +12,35 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import settings
 from app.models.conversation import Conversation
 from app.models.message import Message
-from app.services.product_catalog import _match_brands
-from app.services.product_taxonomy import infer_tags
+from app.services.product_taxonomy import infer_tags, match_brands
 from app.utils.time import utc_now
 
 _WORD_RE = re.compile(r"[\w\u0600-\u06FF]+", re.UNICODE)
-_ARABIC_FIX = str.maketrans({"ي": "ی", "ك": "ک", "‌": " "})
+_ARABIC_FIX = str.maketrans({
+    "ي": "ی",
+    "ك": "ک",
+    "‌": " ",
+    "۰": "0",
+    "۱": "1",
+    "۲": "2",
+    "۳": "3",
+    "۴": "4",
+    "۵": "5",
+    "۶": "6",
+    "۷": "7",
+    "۸": "8",
+    "۹": "9",
+    "٠": "0",
+    "١": "1",
+    "٢": "2",
+    "٣": "3",
+    "٤": "4",
+    "٥": "5",
+    "٦": "6",
+    "٧": "7",
+    "٨": "8",
+    "٩": "9",
+})
 
 
 @dataclass(frozen=True)
@@ -35,27 +58,91 @@ PATTERN_RULES: dict[str, dict[str, Any]] = {
         "base": 0.8,
     },
     "order_followup": {
-        "keywords": {"پیگیری", "کد سفارش", "وضعیت سفارش", "رهگیری", "ارسال شد", "سفارش من"},
+        "keywords": {
+            "پیگیری",
+            "پیگیری سفارش",
+            "کد سفارش",
+            "وضعیت سفارش",
+            "رهگیری",
+            "کد رهگیری",
+            "مرسوله",
+            "ارسال شد",
+            "تحویل",
+            "سفارش من",
+        },
         "base": 0.75,
     },
     "purchase_intent": {
-        "keywords": {"میخرم", "می خرم", "می‌خرم", "ثبت سفارش", "خرید کنم", "میخوام بخرم"},
+        "keywords": {
+            "میخرم",
+            "می خرم",
+            "می‌خرم",
+            "ثبت سفارش",
+            "ثبت کن",
+            "خرید کنم",
+            "میخوام بخرم",
+            "می‌خوام بخرم",
+            "می‌خوام ثبت",
+            "سفارش بده",
+        },
         "base": 0.7,
     },
     "complaint": {
-        "keywords": {"ناراضی", "افتضاح", "بد", "شکایت", "مشکل دارم", "کلاهبرداری"},
+        "keywords": {
+            "ناراضی",
+            "افتضاح",
+            "بد",
+            "خرابه",
+            "کیفیت بد",
+            "شکایت",
+            "مشکل دارم",
+            "کلاهبرداری",
+            "تاخیر",
+            "بدقولی",
+        },
         "base": 0.7,
     },
     "return_exchange": {
-        "keywords": {"مرجوع", "بازگشت", "تعویض", "refund", "return", "گارانتی"},
+        "keywords": {
+            "مرجوع",
+            "مرجوعی",
+            "بازگشت",
+            "تعویض",
+            "پس دادن",
+            "refund",
+            "return",
+            "گارانتی",
+        },
         "base": 0.65,
     },
     "delivery": {
-        "keywords": {"ارسال", "تحویل", "پست", "چند روزه", "زمان ارسال", "delivery", "shipping"},
+        "keywords": {
+            "ارسال",
+            "تحویل",
+            "پست",
+            "تیپاکس",
+            "پیک",
+            "چند روزه",
+            "زمان ارسال",
+            "هزینه ارسال",
+            "delivery",
+            "shipping",
+        },
         "base": 0.6,
     },
     "payment": {
-        "keywords": {"پرداخت", "درگاه", "زرین پال", "زرین‌پال", "کارت", "payment", "پرداخت امن"},
+        "keywords": {
+            "پرداخت",
+            "درگاه",
+            "پرداخت آنلاین",
+            "زرین پال",
+            "زرین‌پال",
+            "کارت",
+            "کارت به کارت",
+            "تراکنش",
+            "payment",
+            "پرداخت امن",
+        },
         "base": 0.55,
     },
     "comparison": {
@@ -63,23 +150,56 @@ PATTERN_RULES: dict[str, dict[str, Any]] = {
         "base": 0.6,
     },
     "price_availability": {
-        "keywords": {"قیمت", "چنده", "موجود", "موجودی", "دارین", "دارید"},
+        "keywords": {
+            "قیمت",
+            "قیمتش",
+            "قیمتشو",
+            "چنده",
+            "چقدره",
+            "موجود",
+            "موجودی",
+            "ناموجود",
+            "تموم",
+            "دارین",
+            "دارید",
+        },
         "base": 0.55,
     },
     "product_detail": {
-        "keywords": {"سایز", "اندازه", "شماره", "رنگ", "color", "size"},
+        "keywords": {"سایز", "اندازه", "شماره", "رنگ", "جنس", "مدل", "color", "size"},
         "base": 0.45,
     },
     "bulk_request": {
-        "keywords": {"عمده", "پخش", "تیراژ", "تعداد بالا", "bulk"},
+        "keywords": {"عمده", "پخش", "تیراژ", "تعداد بالا", "تعداد زیاد", "قیمت عمده", "bulk"},
         "base": 0.5,
     },
     "recommendation": {
-        "keywords": {"پیشنهاد", "چی پیشنهاد", "چی خوبه", "چی دارین", "چی دارید", "چه مدل"},
+        "keywords": {
+            "پیشنهاد",
+            "پیشنهاد بده",
+            "چی پیشنهاد",
+            "چی خوبه",
+            "چی دارین",
+            "چی دارید",
+            "چه مدل",
+            "چی مناسبه",
+        },
         "base": 0.5,
     },
     "store_info": {
-        "keywords": {"آدرس", "ساعت کاری", "ساعت کار", "شماره تماس", "تلفن", "لوکیشن", "نقشه"},
+        "keywords": {
+            "آدرس",
+            "ساعت کاری",
+            "ساعت کار",
+            "شماره تماس",
+            "تلفن",
+            "لوکیشن",
+            "نقشه",
+            "راه ارتباطی",
+            "اینستاگرام",
+            "واتساپ",
+            "تلگرام",
+        },
         "base": 0.5,
     },
     "thanks": {
@@ -143,7 +263,7 @@ def detect_behavior(text: str | None) -> BehaviorMatch | None:
             candidates.append((score, pattern, matched, []))
 
     tags = infer_tags(normalized)
-    brands = _match_brands(normalized)
+    brands = match_brands(normalized)
     tag_hits = list(tags.categories + tags.genders + tags.styles + tags.materials + tags.colors + tags.sizes)
     if tag_hits or brands:
         score = min(1.0, 0.45 + 0.08 * len(tag_hits) + 0.1 * len(brands))

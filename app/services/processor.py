@@ -45,6 +45,7 @@ from app.services.guardrails import (
     wants_product_intent,
     wants_address,
     wants_hours,
+    wants_more_products,
     wants_phone,
     wants_trust,
     wants_website,
@@ -133,6 +134,44 @@ def _build_more_products_plan() -> OutboundPlan:
         text="اگر ادامه می‌خواهید بنویسید «ادامه».",
         quick_replies=[QuickReplyOption(title="ادامه", payload="ادامه")],
     )
+
+
+async def _update_product_state(
+    session: AsyncSession,
+    user: User,
+    query: str,
+    offset: int,
+    total: int,
+) -> None:
+    profile = user.profile_json if isinstance(user.profile_json, dict) else {}
+    if not query:
+        profile.pop("product_state", None)
+    else:
+        profile["product_state"] = {
+            "query": query,
+            "offset": offset,
+            "total": total,
+            "updated_at": utc_now().isoformat(),
+        }
+    user.profile_json = profile
+    await session.commit()
+
+
+def _build_match_debug(matches: list[Any]) -> list[dict[str, Any]]:
+    debug: list[dict[str, Any]] = []
+    for match in matches[: settings.PRODUCT_MATCH_LIMIT]:
+        product = match.product
+        debug.append(
+            {
+                "id": product.id,
+                "slug": product.slug,
+                "score": match.score,
+                "matched_tokens": list(match.matched_tokens),
+                "matched_tags": list(match.matched_tags),
+                "matched_brands": list(getattr(match, "matched_brands", ())),
+            }
+        )
+    return debug
 
 
 def _split_show_products(text: str) -> tuple[bool, str]:
@@ -763,6 +802,83 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     )
                     return
 
+            continue_request = wants_more_products(intent_text)
+            profile = user.profile_json if isinstance(user.profile_json, dict) else {}
+            prefs = profile.get("prefs") if isinstance(profile, dict) else None
+            if continue_request:
+                state = profile.get("product_state") if isinstance(profile, dict) else None
+                state_query = state.get("query") if isinstance(state, dict) else None
+                state_offset = state.get("offset") if isinstance(state, dict) else None
+                state_updated = state.get("updated_at") if isinstance(state, dict) else None
+                updated_at = parse_timestamp(state_updated) if isinstance(state_updated, str) else None
+                if not state_query or state_offset is None:
+                    await send_and_store(
+                        session,
+                        conversation.id,
+                        normalized.sender_id,
+                        "برای ادامه لطفاً بگید دنبال چه محصولی بودید.",
+                        meta=_merge_meta({"source": "product_match", "intent": "product_more_empty"}),
+                    )
+                    return
+                if updated_at and (utc_now() - updated_at).total_seconds() > settings.PRODUCT_CONTINUE_TTL_SEC:
+                    await send_and_store(
+                        session,
+                        conversation.id,
+                        normalized.sender_id,
+                        "از آخرین لیست زمان گذشته؛ لطفاً دوباره بگید دنبال چه محصولی هستید.",
+                        meta=_merge_meta({"source": "product_match", "intent": "product_more_expired"}),
+                    )
+                    return
+                matches = await match_products_with_scores(
+                    session,
+                    state_query,
+                    limit=max(
+                        settings.LLM_PRODUCT_CONTEXT_LIMIT,
+                        settings.PRODUCT_MATCH_LIMIT + int(state_offset),
+                    ),
+                )
+                products = [match.product for match in matches]
+                products = _rank_products_by_prefs(products, prefs)
+                start = int(state_offset)
+                end = start + settings.PRODUCT_MATCH_LIMIT
+                page = products[start:end]
+                if not page:
+                    await send_and_store(
+                        session,
+                        conversation.id,
+                        normalized.sender_id,
+                        "مورد بیشتری پیدا نکردم. اگر مدل خاصی مدنظرتونه بفرستید.",
+                        meta=_merge_meta({"source": "product_match", "intent": "product_more_done"}),
+                    )
+                    return
+                product_plan = build_product_plan(state_query, page)
+                if product_plan:
+                    await send_plan_and_store(
+                        session,
+                        conversation.id,
+                        normalized.sender_id,
+                        product_plan,
+                        meta=_merge_meta({
+                            "source": "product_match",
+                            "intent": "product_more",
+                            "product_ids": [product.id for product in page],
+                            "product_slugs": [product.slug for product in page if product.slug],
+                        }),
+                    )
+                await _update_product_state(session, user, state_query, end, len(products))
+                if len(products) > end:
+                    await send_plan_and_store(
+                        session,
+                        conversation.id,
+                        normalized.sender_id,
+                        _build_more_products_plan(),
+                        meta=_merge_meta({
+                            "source": "product_match",
+                            "intent": "product_more_prompt",
+                        }),
+                    )
+                return
+
             if query_text:
                 pref_updates = extract_preferences(query_text)
                 if pref_updates:
@@ -859,6 +975,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         settings.PRODUCT_MATCH_LIMIT,
                     ),
                 )
+            match_debug = _build_match_debug(matches_for_context)
             matched_products_for_llm = [match.product for match in matches_for_context]
             matched_products = matched_products_for_llm[: settings.PRODUCT_MATCH_LIMIT]
             if product_from_url:
@@ -890,6 +1007,14 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             matched_products = _rank_products_by_prefs(matched_products, prefs)
             matched_product_ids = [product.id for product in matched_products]
             matched_product_slugs = [product.slug for product in matched_products if product.slug]
+            query_tags_meta = {
+                "categories": list(query_tags.categories),
+                "genders": list(query_tags.genders),
+                "styles": list(query_tags.styles),
+                "materials": list(query_tags.materials),
+                "colors": list(query_tags.colors),
+                "sizes": list(query_tags.sizes),
+            }
 
             confidence_ok = True
             low_confidence = False
@@ -951,6 +1076,8 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                             "product_ids": matched_product_ids,
                             "product_slugs": matched_product_slugs,
                             "confidence_ok": False,
+                            "match_debug": match_debug,
+                            "query_tags": query_tags_meta,
                         }),
                     )
                     return
@@ -969,6 +1096,8 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                                 "product_ids": matched_product_ids,
                                 "product_slugs": matched_product_slugs,
                                 "confidence_ok": confidence_ok,
+                                "match_debug": match_debug,
+                                "query_tags": query_tags_meta,
                             }),
                         )
                         if (wants_products or is_plain_list_request) and more_results_available:
@@ -984,6 +1113,13 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                                     "product_slugs": matched_product_slugs,
                                 }),
                             )
+                        await _update_product_state(
+                            session,
+                            user,
+                            query_text,
+                            len(matched_products),
+                            len(matched_products_for_llm),
+                        )
                         return
                 if product_intent and not matched_products:
                     await send_and_store(
@@ -1225,6 +1361,8 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         "required_fields": required_fields,
                         "order_flow": bool(order_hint_text),
                         "show_products_token": show_products,
+                        "match_debug": match_debug,
+                        "query_tags": query_tags_meta,
                     }),
                 )
 
@@ -1241,6 +1379,8 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         "product_slugs": matched_product_slugs,
                         "confidence_ok": confidence_ok,
                         "llm_first": llm_first_all,
+                        "match_debug": match_debug,
+                        "query_tags": query_tags_meta,
                     }),
                 )
                 if (wants_products or is_plain_list_request) and more_results_available:
@@ -1256,6 +1396,13 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                             "product_slugs": matched_product_slugs,
                         }),
                     )
+                await _update_product_state(
+                    session,
+                    user,
+                    query_text,
+                    len(matched_products),
+                    len(matched_products_for_llm),
+                )
         except Exception as exc:
             logger.error("errors", stage="processor", error=str(exc))
             await session.rollback()
