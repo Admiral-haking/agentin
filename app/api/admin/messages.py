@@ -10,9 +10,28 @@ from app.api.admin.utils import list_response, parse_filter
 from app.api.deps import require_role
 from app.core.database import get_session
 from app.models.message import Message
+from app.models.conversation import Conversation
+from app.models.user import User
 from app.schemas.admin.message import MessageOut
 
 router = APIRouter(prefix="/admin/messages", tags=["admin"])
+
+
+def _message_out(message: Message, conversation: Conversation | None, user: User | None) -> MessageOut:
+    return MessageOut(
+        id=message.id,
+        conversation_id=message.conversation_id,
+        user_id=conversation.user_id if conversation else None,
+        user_external_id=user.external_id if user else None,
+        username=user.username if user else None,
+        is_vip=user.is_vip if user else None,
+        role=message.role,
+        type=message.type,
+        content_text=message.content_text,
+        media_url=message.media_url,
+        payload_json=message.payload_json,
+        created_at=message.created_at,
+    )
 
 
 @router.get("", response_model=dict)
@@ -26,7 +45,7 @@ async def list_messages(
     admin=Depends(require_role("admin", "staff")),
 ) -> dict:
     filters = parse_filter(filter)
-    query = select(Message)
+    query = select(Message, Conversation, User).join(Conversation).join(User)
 
     if "id" in filters:
         ids = filters["id"]
@@ -61,7 +80,10 @@ async def list_messages(
 
     total = await session.scalar(select(func.count()).select_from(query.subquery()))
     result = await session.execute(query.offset(skip).limit(limit))
-    items = [MessageOut.model_validate(item) for item in result.scalars().all()]
+    items = [
+        _message_out(message, conversation, user)
+        for message, conversation, user in result.all()
+    ]
     return list_response(items, total or 0)
 
 
@@ -71,7 +93,15 @@ async def get_message(
     session: AsyncSession = Depends(get_session),
     admin=Depends(require_role("admin", "staff")),
 ) -> MessageOut:
-    message = await session.get(Message, message_id)
-    if not message:
+    result = await session.execute(
+        select(Message, Conversation, User)
+        .join(Conversation)
+        .join(User)
+        .where(Message.id == message_id)
+        .limit(1)
+    )
+    row = result.first()
+    if not row:
         raise HTTPException(status_code=404, detail="Message not found")
-    return MessageOut.model_validate(message)
+    message, conversation, user = row
+    return _message_out(message, conversation, user)

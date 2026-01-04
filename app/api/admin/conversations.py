@@ -16,6 +16,22 @@ from app.schemas.admin.conversation import ConversationOut
 router = APIRouter(prefix="/admin/conversations", tags=["admin"])
 
 
+def _conversation_out(conversation: Conversation, user: User | None) -> ConversationOut:
+    return ConversationOut(
+        id=conversation.id,
+        user_id=conversation.user_id,
+        user_external_id=user.external_id if user else None,
+        username=user.username if user else None,
+        is_vip=user.is_vip if user else None,
+        vip_score=user.vip_score if user else None,
+        status=conversation.status,
+        last_user_message_at=conversation.last_user_message_at,
+        last_bot_message_at=conversation.last_bot_message_at,
+        created_at=conversation.created_at,
+        updated_at=conversation.updated_at,
+    )
+
+
 @router.get("", response_model=dict)
 async def list_conversations(
     skip: int = 0,
@@ -27,7 +43,7 @@ async def list_conversations(
     admin=Depends(require_role("admin", "staff")),
 ) -> dict:
     filters = parse_filter(filter)
-    query = select(Conversation).join(User)
+    query = select(Conversation, User).join(User)
 
     if "id" in filters:
         ids = filters["id"]
@@ -60,7 +76,10 @@ async def list_conversations(
 
     total = await session.scalar(select(func.count()).select_from(query.subquery()))
     result = await session.execute(query.offset(skip).limit(limit))
-    items = [ConversationOut.model_validate(item) for item in result.scalars().all()]
+    items = [
+        _conversation_out(conversation, user)
+        for conversation, user in result.all()
+    ]
     return list_response(items, total or 0)
 
 
@@ -70,7 +89,14 @@ async def get_conversation(
     session: AsyncSession = Depends(get_session),
     admin=Depends(require_role("admin", "staff")),
 ) -> ConversationOut:
-    conversation = await session.get(Conversation, conversation_id)
-    if not conversation:
+    result = await session.execute(
+        select(Conversation, User)
+        .join(User)
+        .where(Conversation.id == conversation_id)
+        .limit(1)
+    )
+    row = result.first()
+    if not row:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    return ConversationOut.model_validate(conversation)
+    conversation, user = row
+    return _conversation_out(conversation, user)

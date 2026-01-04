@@ -4,7 +4,7 @@ from urllib.parse import quote, urlparse
 
 from app.core.config import settings
 from app.models.product import Product
-from app.schemas.send import Button, OutboundPlan, TemplateElement
+from app.schemas.send import Button, OutboundPlan, QuickReplyOption, TemplateElement
 
 PRODUCT_LIST_KEYWORDS = {
     "محصول",
@@ -106,6 +106,15 @@ def _build_product_buttons(product: Product) -> list[Button]:
     return buttons[: settings.MAX_BUTTONS]
 
 
+def _build_product_quick_replies() -> list[QuickReplyOption]:
+    options: list[QuickReplyOption] = []
+    if settings.ORDER_FORM_ENABLED:
+        options.append(QuickReplyOption(title="ثبت سفارش", payload="ثبت سفارش"))
+    options.append(QuickReplyOption(title="رنگ‌های موجود", payload="رنگ‌های موجود"))
+    options.append(QuickReplyOption(title="مشاوره", payload="مشاوره"))
+    return options[: settings.MAX_BUTTONS]
+
+
 def wants_product_list(text: str | None) -> bool:
     normalized = (text or "").strip().lower()
     if not normalized:
@@ -164,7 +173,11 @@ def build_product_plan(
                 )
             )
         if elements:
-            return OutboundPlan(type="generic_template", elements=elements)
+            return OutboundPlan(
+                type="generic_template",
+                elements=elements,
+                quick_replies=_build_product_quick_replies(),
+            )
 
     product = products[0]
     images = _normalize_images(product.images)
@@ -196,7 +209,11 @@ def build_product_plan(
                 )
             )
         if elements:
-            return OutboundPlan(type="generic_template", elements=elements)
+            return OutboundPlan(
+                type="generic_template",
+                elements=elements,
+                quick_replies=_build_product_quick_replies(),
+            )
 
     if images:
         title = product.title or product.slug or "محصول"
@@ -217,7 +234,11 @@ def build_product_plan(
             image_url=_proxy_image_url(images[0]),
             buttons=_build_product_buttons(product),
         )
-        return OutboundPlan(type="generic_template", elements=[element])
+        return OutboundPlan(
+            type="generic_template",
+            elements=[element],
+            quick_replies=_build_product_quick_replies(),
+        )
 
     title = product.title or product.slug or "محصول"
     price = _format_price(product.price)
@@ -232,4 +253,9 @@ def build_product_plan(
         text_parts.insert(2, f"قبل: {_format_price(product.old_price)}")
     message = " | ".join(text_parts)
     buttons = _build_product_buttons(product)
-    return OutboundPlan(type="button", text=message, buttons=buttons)
+    return OutboundPlan(
+        type="button",
+        text=message,
+        buttons=buttons,
+        quick_replies=_build_product_quick_replies(),
+    )

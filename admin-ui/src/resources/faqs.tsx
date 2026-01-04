@@ -21,6 +21,7 @@ const FaqFilters = [
 export const FaqList = () => (
   <List
     filters={FaqFilters}
+    sort={{ field: 'updated_at', order: 'DESC' }}
     title={
       <ResourceTitle
         title="سوالات متداول"

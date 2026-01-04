@@ -10,7 +10,7 @@ from app.api.admin.utils import list_response, parse_filter
 from app.api.deps import require_role
 from app.core.database import get_session
 from app.models.user import User
-from app.schemas.admin.user import UserImportPayload, UserOut
+from app.schemas.admin.user import UserImportPayload, UserOut, UserUpdate
 from app.services.contacts_importer import (
     parse_csv_contacts,
     parse_json_contacts,
@@ -47,6 +47,18 @@ async def list_users(
         query = query.where(User.external_id.ilike(f"%{filters['external_id']}%"))
     if "username" in filters:
         query = query.where(User.username.ilike(f"%{filters['username']}%"))
+    if "is_vip" in filters:
+        value = str(filters["is_vip"]).lower()
+        if value in {"true", "1", "yes"}:
+            query = query.where(User.is_vip.is_(True))
+        elif value in {"false", "0", "no"}:
+            query = query.where(User.is_vip.is_(False))
+    if "followup_opt_out" in filters:
+        value = str(filters["followup_opt_out"]).lower()
+        if value in {"true", "1", "yes"}:
+            query = query.where(User.followup_opt_out.is_(True))
+        elif value in {"false", "0", "no"}:
+            query = query.where(User.followup_opt_out.is_(False))
     if "from" in filters:
         try:
             start = datetime.fromisoformat(filters["from"])
@@ -82,6 +94,32 @@ async def get_user(
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return UserOut.model_validate(user)
+
+
+@router.patch("/{user_id}", response_model=UserOut)
+async def update_user(
+    user_id: int,
+    payload: UserUpdate,
+    session: AsyncSession = Depends(get_session),
+    admin=Depends(require_role("admin", "staff")),
+) -> UserOut:
+    user = await session.get(User, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    for key, value in payload.model_dump(exclude_unset=True).items():
+        setattr(user, key, value)
+    await session.commit()
+    return UserOut.model_validate(user)
+
+
+@router.put("/{user_id}", response_model=UserOut)
+async def replace_user(
+    user_id: int,
+    payload: UserUpdate,
+    session: AsyncSession = Depends(get_session),
+    admin=Depends(require_role("admin", "staff")),
+) -> UserOut:
+    return await update_user(user_id, payload, session, admin)
 
 
 @router.post("/sync", response_model=dict)

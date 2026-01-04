@@ -53,26 +53,7 @@ class BehaviorMatch:
 
 
 PATTERN_RULES: dict[str, dict[str, Any]] = {
-    "order_cancel": {
-        "keywords": {"لغو", "کنسل", "cancel", "لغو سفارش", "انصراف"},
-        "base": 0.8,
-    },
-    "order_followup": {
-        "keywords": {
-            "پیگیری",
-            "پیگیری سفارش",
-            "کد سفارش",
-            "وضعیت سفارش",
-            "رهگیری",
-            "کد رهگیری",
-            "مرسوله",
-            "ارسال شد",
-            "تحویل",
-            "سفارش من",
-        },
-        "base": 0.75,
-    },
-    "purchase_intent": {
+    "ready_to_buy": {
         "keywords": {
             "میخرم",
             "می خرم",
@@ -87,7 +68,24 @@ PATTERN_RULES: dict[str, dict[str, Any]] = {
         },
         "base": 0.7,
     },
-    "complaint": {
+    "checkout_help": {
+        "keywords": {
+            "پیگیری",
+            "کد سفارش",
+            "وضعیت سفارش",
+            "رهگیری",
+            "کد رهگیری",
+            "مرسوله",
+            "ارسال شد",
+            "تحویل",
+            "پرداخت",
+            "درگاه",
+            "کارت به کارت",
+            "payment",
+        },
+        "base": 0.65,
+    },
+    "angry_customer": {
         "keywords": {
             "ناراضی",
             "افتضاح",
@@ -102,138 +100,42 @@ PATTERN_RULES: dict[str, dict[str, Any]] = {
         },
         "base": 0.7,
     },
-    "return_exchange": {
-        "keywords": {
-            "مرجوع",
-            "مرجوعی",
-            "بازگشت",
-            "تعویض",
-            "پس دادن",
-            "refund",
-            "return",
-            "گارانتی",
-        },
-        "base": 0.65,
-    },
-    "delivery": {
-        "keywords": {
-            "ارسال",
-            "تحویل",
-            "پست",
-            "تیپاکس",
-            "پیک",
-            "چند روزه",
-            "زمان ارسال",
-            "هزینه ارسال",
-            "delivery",
-            "shipping",
-        },
-        "base": 0.6,
-    },
-    "payment": {
-        "keywords": {
-            "پرداخت",
-            "درگاه",
-            "پرداخت آنلاین",
-            "زرین پال",
-            "زرین‌پال",
-            "کارت",
-            "کارت به کارت",
-            "تراکنش",
-            "payment",
-            "پرداخت امن",
-        },
-        "base": 0.55,
-    },
-    "comparison": {
+    "comparison_request": {
         "keywords": {"مقایسه", "فرق", "تفاوت", "کدوم بهتر", "بهتره", "بهتر است"},
         "base": 0.6,
     },
-    "price_availability": {
-        "keywords": {
-            "قیمت",
-            "قیمتش",
-            "قیمتشو",
-            "چنده",
-            "چقدره",
-            "موجود",
-            "موجودی",
-            "ناموجود",
-            "تموم",
-            "دارین",
-            "دارید",
-        },
+    "price_inquiry": {
+        "keywords": {"قیمت", "قیمتش", "قیمتشو", "چنده", "چقدره", "هزینه"},
         "base": 0.55,
     },
-    "product_detail": {
-        "keywords": {"سایز", "اندازه", "شماره", "رنگ", "جنس", "مدل", "color", "size"},
-        "base": 0.45,
+    "availability_check": {
+        "keywords": {"موجود", "موجودی", "ناموجود", "تموم", "دارین", "دارید"},
+        "base": 0.55,
     },
-    "bulk_request": {
-        "keywords": {"عمده", "پخش", "تیراژ", "تعداد بالا", "تعداد زیاد", "قیمت عمده", "bulk"},
+    "browsing_uncertain": {
+        "keywords": {"چی پیشنهاد", "چی دارین", "چی دارید", "چه مدل", "چی مناسبه"},
         "base": 0.5,
     },
-    "recommendation": {
-        "keywords": {
-            "پیشنهاد",
-            "پیشنهاد بده",
-            "چی پیشنهاد",
-            "چی خوبه",
-            "چی دارین",
-            "چی دارید",
-            "چه مدل",
-            "چی مناسبه",
-        },
+    "repeat_request": {
+        "keywords": {"دوباره", "مجدد", "یه بار دیگه", "یک بار دیگه", "تکرار"},
         "base": 0.5,
     },
-    "store_info": {
-        "keywords": {
-            "آدرس",
-            "ساعت کاری",
-            "ساعت کار",
-            "شماره تماس",
-            "تلفن",
-            "لوکیشن",
-            "نقشه",
-            "راه ارتباطی",
-            "اینستاگرام",
-            "واتساپ",
-            "تلگرام",
-        },
-        "base": 0.5,
-    },
-    "thanks": {
-        "keywords": {"ممنون", "مرسی", "سپاس", "تشکر", "thanks", "thank you"},
-        "base": 0.4,
-    },
-    "goodbye": {
-        "keywords": {"خداحافظ", "فعلا", "فعلاً", "بدرود", "bye", "goodbye"},
-        "base": 0.4,
-    },
-    "decline": {
-        "keywords": {"نمیخوام", "نمی‌خوام", "چیزی نمیخوام", "بیخیال", "ولش کن"},
-        "base": 0.4,
+    "spam_greeting": {
+        "keywords": {"سلام", "درود", "hi", "hello"},
+        "base": 0.35,
     },
 }
 
 PATTERN_PRIORITY = [
-    "order_cancel",
-    "order_followup",
-    "purchase_intent",
-    "complaint",
-    "return_exchange",
-    "delivery",
-    "payment",
-    "comparison",
-    "price_availability",
-    "recommendation",
-    "product_request",
-    "product_detail",
-    "bulk_request",
-    "store_info",
-    "thanks",
-    "goodbye",
-    "decline",
+    "ready_to_buy",
+    "checkout_help",
+    "angry_customer",
+    "comparison_request",
+    "price_inquiry",
+    "availability_check",
+    "repeat_request",
+    "browsing_uncertain",
+    "spam_greeting",
 ]
 
 

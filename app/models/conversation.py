@@ -17,3 +17,4 @@ class Conversation(TimestampMixin, Base):
 
     user = relationship("User", back_populates="conversations")
     messages = relationship("Message", back_populates="conversation")
+    state = relationship("ConversationState", back_populates="conversation", uselist=False)

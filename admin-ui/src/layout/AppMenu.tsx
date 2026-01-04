@@ -14,6 +14,8 @@ import SendRoundedIcon from '@mui/icons-material/SendRounded';
 import HealthAndSafetyRoundedIcon from '@mui/icons-material/HealthAndSafetyRounded';
 import PsychologyRoundedIcon from '@mui/icons-material/PsychologyRounded';
 import TextSnippetRoundedIcon from '@mui/icons-material/TextSnippetRounded';
+import SupportAgentRoundedIcon from '@mui/icons-material/SupportAgentRounded';
+import ScheduleRoundedIcon from '@mui/icons-material/ScheduleRounded';
 
 export const AppMenu = () => {
   const { permissions } = usePermissions();
@@ -26,6 +28,12 @@ export const AppMenu = () => {
       <MenuItemLink to="/conversations" primaryText="گفتگوها" leftIcon={<ForumRoundedIcon />} />
       <MenuItemLink to="/messages" primaryText="پیام‌ها" leftIcon={<MessageRoundedIcon />} />
       <MenuItemLink to="/users" primaryText="مخاطبین" leftIcon={<PeopleAltRoundedIcon />} />
+      {(permissions === 'admin' || permissions === 'staff') && (
+        <MenuItemLink to="/tickets" primaryText="تیکت‌های پشتیبانی" leftIcon={<SupportAgentRoundedIcon />} />
+      )}
+      {(permissions === 'admin' || permissions === 'staff') && (
+        <MenuItemLink to="/followups" primaryText="پیگیری‌ها" leftIcon={<ScheduleRoundedIcon />} />
+      )}
       <MenuItemLink to="/logs" primaryText="لاگ‌ها" leftIcon={<AnalyticsRoundedIcon />} />
       <MenuItemLink to="/assistant" primaryText="دستیار هوشمند" leftIcon={<AutoAwesomeRoundedIcon />} />
       <MenuItemLink to="/directam" primaryText="کنسول دایرکتم" leftIcon={<SendRoundedIcon />} />

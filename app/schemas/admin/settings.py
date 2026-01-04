@@ -10,8 +10,12 @@ class BotSettingsUpdate(BaseModel):
     max_output_chars: int | None = None
     max_history_messages: int | None = None
     system_prompt: str | None = None
+    admin_notes: str | None = None
     fallback_text: str | None = None
     active: bool | None = None
+    followup_enabled: bool | None = None
+    followup_delay_hours: int | None = None
+    followup_message: str | None = None
 
 
 class BotSettingsOut(BaseModel):
@@ -22,8 +26,12 @@ class BotSettingsOut(BaseModel):
     max_output_chars: int
     max_history_messages: int
     system_prompt: str | None = None
+    admin_notes: str | None = None
     fallback_text: str | None = None
     language: str | None = None
     active: bool
+    followup_enabled: bool | None = None
+    followup_delay_hours: int | None = None
+    followup_message: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None

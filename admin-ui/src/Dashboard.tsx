@@ -1,4 +1,15 @@
-import { Box, Button, Card, CardContent, Chip, Grid, Stack, Typography } from '@mui/material';
+import {
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Chip,
+  Divider,
+  Grid,
+  LinearProgress,
+  Stack,
+  Typography,
+} from '@mui/material';
 import { Link } from 'react-router-dom';
 import { useDataProvider, usePermissions } from 'react-admin';
 import { useEffect, useState } from 'react';
@@ -16,6 +27,8 @@ export const Dashboard = () => {
   const [syncRun, setSyncRun] = useState<any | null>(null);
   const [syncLoading, setSyncLoading] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
+  const [analytics, setAnalytics] = useState<any | null>(null);
+  const [analyticsError, setAnalyticsError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!productsEnabled) return;
@@ -32,6 +45,24 @@ export const Dashboard = () => {
       .catch(() => setSyncRun(null))
       .finally(() => setSyncLoading(false));
   }, [dataProvider]);
+
+  useEffect(() => {
+    const loadAnalytics = async () => {
+      try {
+        const data = await fetchJson(
+          `${API_URL}/admin/analytics/summary?days=30`,
+          {},
+          'دریافت گزارش تحلیلی ناموفق بود.'
+        );
+        setAnalytics(data);
+      } catch (error) {
+        const message =
+          error instanceof Error ? error.message : 'دریافت گزارش تحلیلی ناموفق بود.';
+        setAnalyticsError(message);
+      }
+    };
+    loadAnalytics();
+  }, []);
 
   const handleSync = async () => {
     setSyncError(null);
@@ -70,6 +101,177 @@ export const Dashboard = () => {
       </Stack>
 
       <Grid container spacing={2}>
+        <Grid item xs={12}>
+          <Card>
+            <CardContent>
+              <Stack spacing={1.5}>
+                <Stack direction="row" justifyContent="space-between" alignItems="center">
+                  <Typography variant="h6">تحلیل عملکرد ۳۰ روز اخیر</Typography>
+                  <Chip label="گزارش" size="small" color="primary" />
+                </Stack>
+                {analyticsError && (
+                  <Typography variant="body2" color="error">
+                    {analyticsError}
+                  </Typography>
+                )}
+                {analytics ? (
+                  <Stack spacing={2}>
+                    <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+                      <Card variant="outlined" sx={{ flex: 1 }}>
+                        <CardContent>
+                          <Typography variant="subtitle2" color="text.secondary">
+                            میانگین تاخیر پاسخ
+                          </Typography>
+                          <Typography variant="h6">
+                            {analytics.avg_latency_ms ? `${analytics.avg_latency_ms} ms` : 'نامشخص'}
+                          </Typography>
+                        </CardContent>
+                      </Card>
+                      <Card variant="outlined" sx={{ flex: 1 }}>
+                        <CardContent>
+                          <Typography variant="subtitle2" color="text.secondary">
+                            درخواست‌های آماده خرید
+                          </Typography>
+                          <Typography variant="h6">
+                            {analytics.ready_to_buy ?? 0}
+                          </Typography>
+                        </CardContent>
+                      </Card>
+                      <Card variant="outlined" sx={{ flex: 1 }}>
+                        <CardContent>
+                          <Typography variant="subtitle2" color="text.secondary">
+                            نرخ گفتگوی رهاشده
+                          </Typography>
+                          <Typography variant="h6">
+                            {analytics.abandoned
+                              ? `${Math.round((analytics.abandoned.rate || 0) * 100)}%`
+                              : 'نامشخص'}
+                          </Typography>
+                        </CardContent>
+                      </Card>
+                    </Stack>
+
+                    <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+                      <Card variant="outlined" sx={{ flex: 1 }}>
+                        <CardContent>
+                          <Typography variant="subtitle2" color="text.secondary">
+                            پرتکرارترین نیت‌ها
+                          </Typography>
+                          <Divider sx={{ my: 1 }} />
+                          <Stack spacing={1}>
+                            {(analytics.top_intents || []).map((item: any) => (
+                              <Stack key={item.intent} direction="row" spacing={1} alignItems="center">
+                                <Typography variant="body2" sx={{ minWidth: 120 }}>
+                                  {item.intent}
+                                </Typography>
+                                <LinearProgress
+                                  variant="determinate"
+                                  value={Math.min(100, (item.count || 0) * 10)}
+                                  sx={{ flex: 1, height: 8, borderRadius: 4 }}
+                                />
+                                <Typography variant="caption">{item.count}</Typography>
+                              </Stack>
+                            ))}
+                            {!analytics.top_intents?.length && (
+                              <Typography variant="body2" color="text.secondary">
+                                داده‌ای ثبت نشده است.
+                              </Typography>
+                            )}
+                          </Stack>
+                        </CardContent>
+                      </Card>
+
+                      <Card variant="outlined" sx={{ flex: 1 }}>
+                        <CardContent>
+                          <Typography variant="subtitle2" color="text.secondary">
+                            الگوهای رفتاری پرتکرار
+                          </Typography>
+                          <Divider sx={{ my: 1 }} />
+                          <Stack spacing={1}>
+                            {(analytics.top_patterns || []).map((item: any) => (
+                              <Stack key={item.pattern} direction="row" spacing={1} alignItems="center">
+                                <Typography variant="body2" sx={{ minWidth: 140 }}>
+                                  {item.pattern}
+                                </Typography>
+                                <LinearProgress
+                                  variant="determinate"
+                                  value={Math.min(100, (item.count || 0) * 10)}
+                                  sx={{ flex: 1, height: 8, borderRadius: 4 }}
+                                />
+                                <Typography variant="caption">{item.count}</Typography>
+                              </Stack>
+                            ))}
+                            {!analytics.top_patterns?.length && (
+                              <Typography variant="body2" color="text.secondary">
+                                داده‌ای ثبت نشده است.
+                              </Typography>
+                            )}
+                          </Stack>
+                        </CardContent>
+                      </Card>
+                    </Stack>
+
+                    <Card variant="outlined">
+                      <CardContent>
+                        <Typography variant="subtitle2" color="text.secondary">
+                          پیام‌های روزانه (۷ روز اخیر)
+                        </Typography>
+                        <Divider sx={{ my: 1 }} />
+                        <Stack spacing={1}>
+                          {(analytics.messages_per_day || []).slice(0, 7).map((item: any) => (
+                            <Stack key={item.date} direction="row" spacing={1} alignItems="center">
+                              <Typography variant="body2" sx={{ minWidth: 110 }}>
+                                {item.date}
+                              </Typography>
+                              <LinearProgress
+                                variant="determinate"
+                                value={Math.min(100, (item.count || 0) * 10)}
+                                sx={{ flex: 1, height: 8, borderRadius: 4 }}
+                              />
+                              <Typography variant="caption">{item.count}</Typography>
+                            </Stack>
+                          ))}
+                          {!analytics.messages_per_day?.length && (
+                            <Typography variant="body2" color="text.secondary">
+                              داده‌ای ثبت نشده است.
+                            </Typography>
+                          )}
+                        </Stack>
+                      </CardContent>
+                    </Card>
+
+                    <Card variant="outlined">
+                      <CardContent>
+                        <Typography variant="subtitle2" color="text.secondary">
+                          کلیدواژه‌های پرتکرار
+                        </Typography>
+                        <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ mt: 1 }}>
+                          {(analytics.top_keywords || []).map((item: any) => (
+                            <Chip
+                              key={item.keyword}
+                              label={`${item.keyword} (${item.count})`}
+                              size="small"
+                              sx={{ mb: 1 }}
+                            />
+                          ))}
+                          {!analytics.top_keywords?.length && (
+                            <Typography variant="body2" color="text.secondary">
+                              داده‌ای ثبت نشده است.
+                            </Typography>
+                          )}
+                        </Stack>
+                      </CardContent>
+                    </Card>
+                  </Stack>
+                ) : (
+                  <Typography variant="body2" color="text.secondary">
+                    در حال بارگذاری گزارش...
+                  </Typography>
+                )}
+              </Stack>
+            </CardContent>
+          </Card>
+        </Grid>
         <Grid item xs={12} md={6}>
           <Card>
             <CardContent>

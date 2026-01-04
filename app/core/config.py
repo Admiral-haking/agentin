@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     LLM_MAX_USER_TURNS: int = 6
     WINDOW_HOURS: int = 24
     REQUEST_TIMEOUT_SEC: float = 20.0
+    MAX_RESPONSE_SENTENCES: int = 4
 
     WEBHOOK_SECRET: str | None = None
 
@@ -117,6 +118,15 @@ class Settings(BaseSettings):
     MEDIA_PROXY_ALLOWED_HOSTS: str = "ghlbedovom.com"
     MEDIA_PROXY_TIMEOUT_SEC: float = 12.0
     MEDIA_PROXY_MAX_BYTES: int = 10_000_000
+
+    FOLLOWUP_ENABLED: bool = False
+    FOLLOWUP_DELAY_HOURS: int = 12
+    FOLLOWUP_POLL_SEC: int = 60
+    FOLLOWUP_MESSAGE: str = "اگر سوال یا خریدی داشتید، من در خدمتم."
+
+    VIP_SCORE_THRESHOLD: int = 5
+    CROSS_SELL_ENABLED: bool = True
+    CROSS_SELL_COOLDOWN_MIN: int = 240
 
 
 settings = Settings()

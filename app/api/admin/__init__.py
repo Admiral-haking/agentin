@@ -9,6 +9,9 @@ from app.api.admin.products import router as products_router
 from app.api.admin.assistant import router as assistant_router
 from app.api.admin.ai_context import router as ai_context_router
 from app.api.admin.behavior import router as behavior_router
+from app.api.admin.followups import router as followups_router
+from app.api.admin.tickets import router as tickets_router
+from app.api.admin.analytics import router as analytics_router
 from app.api.admin.settings import router as settings_router
 from app.api.admin.users import router as users_router
 from app.api.admin.directam import router as directam_router
@@ -25,6 +28,9 @@ router.include_router(logs_router)
 router.include_router(assistant_router)
 router.include_router(ai_context_router)
 router.include_router(behavior_router)
+router.include_router(followups_router)
+router.include_router(tickets_router)
+router.include_router(analytics_router)
 router.include_router(users_router)
 router.include_router(directam_router)
 router.include_router(health_router)

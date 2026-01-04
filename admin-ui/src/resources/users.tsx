@@ -1,7 +1,14 @@
 import { useState } from 'react';
 import {
+  BooleanField,
+  BooleanInput,
   Datagrid,
+  Edit,
+  FunctionField,
   List,
+  NumberInput,
+  SelectInput,
+  SimpleForm,
   TextField,
   TextInput,
   NumberField,
@@ -9,7 +16,7 @@ import {
   useNotify,
   useRefresh,
 } from 'react-admin';
-import { Button, Stack } from '@mui/material';
+import { Button, Chip, Stack } from '@mui/material';
 import CloudUploadRoundedIcon from '@mui/icons-material/CloudUploadRounded';
 import SyncRoundedIcon from '@mui/icons-material/SyncRounded';
 import DataObjectRoundedIcon from '@mui/icons-material/DataObjectRounded';
@@ -135,6 +142,24 @@ const UserListActions = () => {
 const UserFilters = [
   <TextInput key="username" source="username" label="نام کاربری" alwaysOn />,
   <TextInput key="external_id" source="external_id" label="شناسه اینستاگرام" />,
+  <SelectInput
+    key="is_vip"
+    source="is_vip"
+    label="VIP"
+    choices={[
+      { id: 'true', name: 'VIP' },
+      { id: 'false', name: 'عادی' },
+    ]}
+  />,
+  <SelectInput
+    key="followup_opt_out"
+    source="followup_opt_out"
+    label="عدم پیگیری"
+    choices={[
+      { id: 'true', name: 'غیرفعال' },
+      { id: 'false', name: 'فعال' },
+    ]}
+  />,
 ];
 
 export const UserList = () => (
@@ -145,14 +170,37 @@ export const UserList = () => (
     actions={<UserListActions />}
     title={<ResourceTitle title="مخاطبین" subtitle="کاربران استخراج‌شده از پیام‌های ورودی." />}
   >
-    <Datagrid bulkActionButtons={false}>
+    <Datagrid rowClick="edit" bulkActionButtons={false}>
       <TextField source="id" label="شناسه" />
       <TextField source="external_id" label="شناسه اینستاگرام" />
       <TextField source="username" label="نام کاربری" />
+      <FunctionField
+        label="VIP"
+        render={(record: any) =>
+          record?.is_vip ? <Chip label="VIP" color="secondary" size="small" /> : '-'
+        }
+      />
+      <NumberField source="vip_score" label="امتیاز VIP" />
       <TextField source="follow_status" label="وضعیت فالو" />
       <NumberField source="follower_count" label="تعداد فالوور" />
+      <BooleanField source="followup_opt_out" label="عدم پیگیری" />
       <TehranDateField source="created_at" label="اولین مشاهده" showTime />
       <TehranDateField source="updated_at" label="آخرین بروزرسانی" showTime />
     </Datagrid>
   </List>
+);
+
+export const UserEdit = () => (
+  <Edit
+    title={<ResourceTitle title="ویرایش مخاطب" subtitle="مدیریت VIP و پیگیری." />}
+  >
+    <SimpleForm>
+      <TextInput source="id" label="شناسه" disabled />
+      <TextInput source="external_id" label="شناسه اینستاگرام" disabled />
+      <TextInput source="username" label="نام کاربری" disabled />
+      <BooleanInput source="is_vip" label="VIP" />
+      <NumberInput source="vip_score" label="امتیاز VIP" />
+      <BooleanInput source="followup_opt_out" label="عدم پیگیری" />
+    </SimpleForm>
+  </Edit>
 );

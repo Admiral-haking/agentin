@@ -5,17 +5,20 @@ from datetime import datetime
 from pydantic import BaseModel, ConfigDict
 
 
-class ConversationOut(BaseModel):
+class SupportTicketOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: int
     user_id: int
-    user_external_id: str | None = None
-    username: str | None = None
-    is_vip: bool | None = None
-    vip_score: int | None = None
+    conversation_id: int | None = None
     status: str
-    last_user_message_at: datetime | None = None
-    last_bot_message_at: datetime | None = None
+    summary: str | None = None
+    last_message: str | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class SupportTicketUpdate(BaseModel):
+    status: str | None = None
+    summary: str | None = None
+    last_message: str | None = None

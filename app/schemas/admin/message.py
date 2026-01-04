@@ -10,6 +10,10 @@ class MessageOut(BaseModel):
 
     id: int
     conversation_id: int
+    user_id: int | None = None
+    user_external_id: str | None = None
+    username: str | None = None
+    is_vip: bool | None = None
     role: str
     type: str
     content_text: str | None = None

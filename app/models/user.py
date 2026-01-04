@@ -1,4 +1,4 @@
-from sqlalchemy import Integer, String
+from sqlalchemy import Boolean, Integer, String
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -14,5 +14,9 @@ class User(TimestampMixin, Base):
     follow_status: Mapped[str | None] = mapped_column(String(50))
     follower_count: Mapped[int | None] = mapped_column(Integer)
     profile_json: Mapped[dict | None] = mapped_column(JSONB)
+    is_vip: Mapped[bool] = mapped_column(Boolean, default=False)
+    vip_score: Mapped[int] = mapped_column(Integer, default=0)
+    followup_opt_out: Mapped[bool] = mapped_column(Boolean, default=False)
 
     conversations = relationship("Conversation", back_populates="user")
+    behavior_profile = relationship("UserBehaviorProfile", back_populates="user", uselist=False)

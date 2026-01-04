@@ -20,13 +20,16 @@ const API_URL = import.meta.env.VITE_API_URL || DEFAULT_API_URL;
 type AiContextResponse = {
   user: { id: number; external_id: string; username?: string | null };
   context: string;
-  sections: Record<string, string | null>;
+  sections: Record<string, any>;
 };
 
 export const AiContextPage = () => {
+  const [conversationId, setConversationId] = useState('');
   const [userId, setUserId] = useState('');
   const [externalId, setExternalId] = useState('');
   const [result, setResult] = useState<AiContextResponse | null>(null);
+  const [simulateMessage, setSimulateMessage] = useState('');
+  const [simulateResult, setSimulateResult] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -35,12 +38,14 @@ export const AiContextPage = () => {
     setError(null);
     try {
       const query = new URLSearchParams();
-      if (userId.trim()) {
+      if (conversationId.trim()) {
+        query.set('conversation_id', conversationId.trim());
+      } else if (userId.trim()) {
         query.set('user_id', userId.trim());
       } else if (externalId.trim()) {
         query.set('external_id', externalId.trim());
       } else {
-        throw new Error('شناسه کاربر یا external_id را وارد کنید.');
+        throw new Error('شناسه گفتگو یا کاربر را وارد کنید.');
       }
       const data = await fetchJson(
         `${API_URL}/admin/ai/context?${query}`,
@@ -48,8 +53,37 @@ export const AiContextPage = () => {
         'دریافت کانتکست ناموفق بود.'
       );
       setResult(data);
+      setSimulateResult(null);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'دریافت کانتکست ناموفق بود.';
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSimulate = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      if (!conversationId.trim()) {
+        throw new Error('برای شبیه‌سازی باید conversation_id وارد شود.');
+      }
+      const data = await fetchJson(
+        `${API_URL}/admin/ai/simulate_reply`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            conversation_id: Number(conversationId),
+            message: simulateMessage.trim() || undefined,
+          }),
+        },
+        'شبیه‌سازی پاسخ ناموفق بود.'
+      );
+      setSimulateResult(data?.draft_reply || '-');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'شبیه‌سازی پاسخ ناموفق بود.';
       setError(message);
     } finally {
       setLoading(false);
@@ -74,6 +108,12 @@ export const AiContextPage = () => {
             <Typography variant="h6">انتخاب کاربر</Typography>
             <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
               <TextField
+                label="شناسه گفتگو (conversation_id)"
+                value={conversationId}
+                onChange={event => setConversationId(event.target.value)}
+                fullWidth
+              />
+              <TextField
                 label="شناسه کاربر (user_id)"
                 value={userId}
                 onChange={event => setUserId(event.target.value)}
@@ -89,6 +129,40 @@ export const AiContextPage = () => {
             <Button variant="contained" onClick={loadContext} disabled={loading}>
               دریافت کانتکست
             </Button>
+          </Stack>
+        </CardContent>
+      </Card>
+
+      <Card sx={{ mb: 2 }}>
+        <CardContent>
+          <Stack spacing={2}>
+            <Typography variant="h6">شبیه‌سازی پاسخ</Typography>
+            <TextField
+              label="پیام فرضی (اختیاری)"
+              value={simulateMessage}
+              onChange={event => setSimulateMessage(event.target.value)}
+              fullWidth
+            />
+            <Button variant="outlined" onClick={handleSimulate} disabled={loading}>
+              شبیه‌سازی پاسخ
+            </Button>
+            {simulateResult && (
+              <Box
+                component="pre"
+                sx={{
+                  whiteSpace: 'pre-wrap',
+                  fontFamily: 'monospace',
+                  fontSize: '0.85rem',
+                  backgroundColor: 'rgba(0,0,0,0.04)',
+                  padding: 2,
+                  borderRadius: 1,
+                  maxHeight: 240,
+                  overflow: 'auto',
+                }}
+              >
+                {simulateResult}
+              </Box>
+            )}
           </Stack>
         </CardContent>
       </Card>
@@ -159,7 +233,11 @@ export const AiContextPage = () => {
                         overflow: 'auto',
                       }}
                     >
-                      {value || '-'}
+                      {typeof value === 'string'
+                        ? value
+                        : value
+                          ? JSON.stringify(value, null, 2)
+                          : '-'}
                     </Box>
                   </Box>
                 ))}

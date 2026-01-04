@@ -8,6 +8,8 @@ import SyncAltRoundedIcon from '@mui/icons-material/SyncAltRounded';
 import SettingsRoundedIcon from '@mui/icons-material/SettingsRounded';
 import AnalyticsRoundedIcon from '@mui/icons-material/AnalyticsRounded';
 import PeopleAltRoundedIcon from '@mui/icons-material/PeopleAltRounded';
+import SupportAgentRoundedIcon from '@mui/icons-material/SupportAgentRounded';
+import ScheduleRoundedIcon from '@mui/icons-material/ScheduleRounded';
 import { Route } from 'react-router-dom';
 import { authProvider } from './authProvider';
 import { dataProvider } from './dataProvider';
@@ -19,7 +21,9 @@ import { ConversationList } from './resources/conversations';
 import { MessageList } from './resources/messages';
 import { SettingsEdit, SettingsList } from './resources/settings';
 import { LogList } from './resources/logs';
-import { UserList } from './resources/users';
+import { UserEdit, UserList } from './resources/users';
+import { TicketEdit, TicketList } from './resources/tickets';
+import { FollowupEdit, FollowupList } from './resources/followups';
 import { AppLayout } from './layout/AppLayout';
 import { Dashboard } from './Dashboard';
 import { appTheme } from './theme';
@@ -100,9 +104,28 @@ export const App = () => (
         <Resource
           name="users"
           list={UserList}
+          edit={UserEdit}
           icon={PeopleAltRoundedIcon}
           options={{ label: 'Contacts' }}
         />
+        {(permissions === 'admin' || permissions === 'staff') && (
+          <Resource
+            name="tickets"
+            list={TicketList}
+            edit={TicketEdit}
+            icon={SupportAgentRoundedIcon}
+            options={{ label: 'Support Tickets' }}
+          />
+        )}
+        {(permissions === 'admin' || permissions === 'staff') && (
+          <Resource
+            name="followups"
+            list={FollowupList}
+            edit={FollowupEdit}
+            icon={ScheduleRoundedIcon}
+            options={{ label: 'Followups' }}
+          />
+        )}
         {permissions === 'admin' && (
           <Resource
             name="settings"

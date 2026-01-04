@@ -13,8 +13,17 @@ class UserOut(BaseModel):
     username: str | None = None
     follow_status: str | None = None
     follower_count: int | None = None
+    is_vip: bool | None = None
+    vip_score: int | None = None
+    followup_opt_out: bool | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class UserUpdate(BaseModel):
+    is_vip: bool | None = None
+    vip_score: int | None = None
+    followup_opt_out: bool | None = None
 
 
 class UserImportItem(BaseModel):

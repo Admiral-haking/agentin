@@ -85,6 +85,12 @@ npm run dev
 
 Ensure the backend allows CORS for your admin UI origin using `ADMIN_UI_ORIGINS`.
 
+Admin UI highlights:
+- User Behavior: extracted patterns + confidence per user.
+- AI Context: view injected context + simulate replies (no send).
+- Support Tickets + Followups: manage complaints and reminder tasks.
+- Analytics dashboard: intents, patterns, latency, and top keywords.
+
 Bootstrap the first admin user:
 
 ```
@@ -127,6 +133,29 @@ Bot behavior:
 - If a user asks for products or prices and there are matches, the bot sends a product carousel/button before calling the LLM.
 - Matched products are also injected into the AI context so the model can answer with accurate prices and links.
 - Order capture can be enabled with `ORDER_FORM_ENABLED=true`.
+
+## Follow-ups
+
+Enable a single safe follow-up after purchase intent:
+
+```
+FOLLOWUP_ENABLED=true
+FOLLOWUP_DELAY_HOURS=12
+FOLLOWUP_MESSAGE=اگر سوال یا خریدی داشتید، من در خدمتم.
+```
+
+Follow-up tasks are stored in `followup_tasks` and can be managed from the admin UI.
+
+## Analytics + AI Context
+
+The backend exposes aggregated analytics:
+
+- `GET /admin/analytics/summary?days=30`
+
+The AI context viewer:
+
+- `GET /admin/ai/context?conversation_id=...`
+- `POST /admin/ai/simulate_reply`
 
 ## Docker (minimal)
 

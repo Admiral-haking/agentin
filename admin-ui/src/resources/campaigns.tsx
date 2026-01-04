@@ -24,6 +24,7 @@ const CampaignFilters = [
 export const CampaignList = () => (
   <List
     filters={CampaignFilters}
+    sort={{ field: 'updated_at', order: 'DESC' }}
     title={
       <ResourceTitle
         title="کمپین‌ها"

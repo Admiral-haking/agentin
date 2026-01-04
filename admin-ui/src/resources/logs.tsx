@@ -18,6 +18,7 @@ const LogFilters = [
 export const LogList = () => (
   <List
     filters={LogFilters}
+    sort={{ field: 'created_at', order: 'DESC' }}
     title={
       <ResourceTitle
         title="لاگ‌های سیستم"

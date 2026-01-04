@@ -34,6 +34,7 @@ export const SettingsList = () => (
       <TextField source="max_output_chars" label="حداکثر پاسخ" />
       <TextField source="max_history_messages" label="تاریخچه" />
       <TextField source="active" label="فعال" />
+      <TextField source="followup_enabled" label="پیگیری فعال" />
     </Datagrid>
   </List>
 );
@@ -94,11 +95,42 @@ export const SettingsEdit = () => (
                 helperText="دستور اصلی که به مدل داده می‌شود."
               />
               <TextInput
+                source="admin_notes"
+                label="یادداشت ادمین"
+                multiline
+                fullWidth
+                helperText="نکات ویژه برای مدل (فقط مدیریت)."
+              />
+              <TextInput
                 source="fallback_text"
                 label="پاسخ جایگزین"
                 multiline
                 fullWidth
                 helperText="وقتی خروجی مدل خالی یا ناامن است."
+              />
+            </Stack>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent>
+            <Stack spacing={1.5}>
+              <Typography variant="h6">پیگیری خودکار</Typography>
+              <Typography variant="body2" color="text.secondary">
+                ارسال یک یادآوری امن پس از قطع گفتگوهای فروش.
+              </Typography>
+              <BooleanInput source="followup_enabled" label="پیگیری فعال" />
+              <NumberInput
+                source="followup_delay_hours"
+                label="تاخیر (ساعت)"
+                helperText="مثال: 6 تا 24 ساعت"
+              />
+              <TextInput
+                source="followup_message"
+                label="متن پیگیری"
+                multiline
+                fullWidth
+                helperText="متن کوتاه یادآوری (اختیاری)"
               />
             </Stack>
           </CardContent>

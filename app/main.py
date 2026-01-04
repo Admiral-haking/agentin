@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from urllib.parse import urlparse
 
@@ -14,6 +15,7 @@ from app.api.service import InvalidApiTokenError, router as service_router
 from app.core.config import settings
 from app.core.database import init_db
 from app.core.logging import setup_logging
+from app.services.followups import followup_worker
 from app.services.processor import handle_webhook
 from app.utils.security import verify_signature
 
@@ -43,6 +45,24 @@ if origins:
 async def on_startup() -> None:
     setup_logging()
     await init_db()
+    app.state.followup_stop = asyncio.Event()
+    app.state.followup_task = asyncio.create_task(
+        followup_worker(app.state.followup_stop)
+    )
+
+
+@app.on_event("shutdown")
+async def on_shutdown() -> None:
+    stop_event = getattr(app.state, "followup_stop", None)
+    task = getattr(app.state, "followup_task", None)
+    if stop_event:
+        stop_event.set()
+    if task:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 @app.get("/health")
