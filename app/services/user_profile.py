@@ -57,6 +57,8 @@ def extract_preferences(text: str | None) -> dict[str, Any]:
     if not text:
         return {}
     normalized = _normalize_text(text)
+    tokens = re.findall(r"[\w\u0600-\u06FF]+", normalized)
+    token_set = set(tokens)
     updates: dict[str, Any] = {}
 
     budget = _extract_budget(normalized)
@@ -71,7 +73,10 @@ def extract_preferences(text: str | None) -> dict[str, Any]:
     if size_match:
         sizes.append(size_match.group(1))
     for item in SIZE_KEYWORDS:
-        if item in normalized:
+        if " " in item or "‌" in item:
+            if item in normalized:
+                sizes.append(item)
+        elif item in token_set:
             sizes.append(item)
     sizes = [size for size in sizes if size]
     if sizes:

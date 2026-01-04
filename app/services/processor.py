@@ -28,6 +28,7 @@ from app.services.app_log_store import log_event
 from app.services.guardrails import (
     build_decline_response,
     build_goodbye_response,
+    build_product_details_question,
     build_rule_based_plan,
     build_thanks_response,
     fallback_for_message_type,
@@ -1034,6 +1035,9 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 show_products = False
             elif required_question_text and not _contains_required_fields(reply_text, required_fields):
                 reply_text = required_question_text
+                show_products = False
+            elif product_intent and not matched_products and needs_product_details(reply_text):
+                reply_text = build_product_details_question()
                 show_products = False
 
             product_plan = None

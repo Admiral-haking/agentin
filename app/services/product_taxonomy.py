@@ -412,6 +412,9 @@ def infer_tags(text: str | None) -> TagInfo:
     if not normalized:
         return TagInfo((), (), (), (), (), ())
 
+    tokens = [token for token in _WORD_RE.findall(normalized) if token]
+    token_set = set(tokens)
+
     categories = _match_synonyms(normalized, CATEGORY_SYNONYMS)
     genders = _match_synonyms(normalized, GENDER_SYNONYMS)
     styles = _match_synonyms(normalized, STYLE_SYNONYMS)
@@ -421,7 +424,10 @@ def infer_tags(text: str | None) -> TagInfo:
     size_matches = re.findall(r"(?:سایز|size)\s*([0-9]{2,3})", normalized)
     sizes = list(size_matches)
     for size in SIZE_KEYWORDS:
-        if size in normalized:
+        if " " in size or "‌" in size:
+            if size in normalized:
+                sizes.append(size)
+        elif size in token_set:
             sizes.append(size)
     sizes.extend(_extract_numeric_sizes(normalized))
     if sizes and not genders:

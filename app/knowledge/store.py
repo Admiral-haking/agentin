@@ -168,6 +168,18 @@ def get_phone_text() -> str:
     return f"شماره تماس: {STORE_KNOWLEDGE['map_listing']['phone']}"
 
 
+def get_contact_text() -> str:
+    socials = STORE_KNOWLEDGE.get("socials", {})
+    parts = [
+        f"شماره تماس: {STORE_KNOWLEDGE['map_listing']['phone']}",
+        f"واتساپ: {socials.get('whatsapp')}" if socials.get("whatsapp") else "",
+        f"اینستاگرام: {socials.get('instagram')}" if socials.get("instagram") else "",
+        f"تلگرام: {socials.get('telegram')}" if socials.get("telegram") else "",
+        f"وب‌سایت: https://{STORE_KNOWLEDGE['website']}",
+    ]
+    return "\n".join(part for part in parts if part)
+
+
 def get_website_url() -> str:
     return f"https://{STORE_KNOWLEDGE['website']}"
 

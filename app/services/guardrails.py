@@ -9,6 +9,7 @@ from pydantic import ValidationError
 from app.core.config import settings
 from app.knowledge.store import (
     get_branches_text,
+    get_contact_text,
     get_hours_text,
     get_phone_text,
     get_trust_text,
@@ -66,6 +67,16 @@ PHONE_KEYWORDS = {
     "تماس",
     "شماره تماس",
     "پشتیبانی تلفنی",
+}
+CONTACT_KEYWORDS = {
+    "راه ارتباطی",
+    "راه های ارتباطی",
+    "راه‌های ارتباطی",
+    "راه تماس",
+    "شماره پشتیبانی",
+    "ارتباط با",
+    "پشتیبانی",
+    "راه ارتباط",
 }
 WEBSITE_KEYWORDS = {
     "سایت",
@@ -260,10 +271,14 @@ def is_greeting(text: str) -> bool:
 
 
 def needs_product_details(text: str) -> bool:
+    if _contains_any(text, CONTACT_KEYWORDS | WEBSITE_KEYWORDS | ADDRESS_KEYWORDS | HOURS_KEYWORDS | PHONE_KEYWORDS | TRUST_KEYWORDS):
+        return False
     return _contains_any(text, PRICE_KEYWORDS)
 
 
 def wants_product_intent(text: str) -> bool:
+    if _contains_any(text, CONTACT_KEYWORDS | WEBSITE_KEYWORDS | ADDRESS_KEYWORDS | HOURS_KEYWORDS | PHONE_KEYWORDS | TRUST_KEYWORDS):
+        return False
     if _contains_any(text, PRICE_KEYWORDS):
         return True
     return _contains_any(text, PRODUCT_INTENT_KEYWORDS)
@@ -287,6 +302,10 @@ def wants_hours(text: str) -> bool:
 
 def wants_phone(text: str) -> bool:
     return _contains_any(text, PHONE_KEYWORDS)
+
+
+def wants_contact(text: str) -> bool:
+    return _contains_any(text, CONTACT_KEYWORDS)
 
 
 def wants_trust(text: str) -> bool:
@@ -345,6 +364,10 @@ def build_trust_response() -> str:
     return get_trust_text()
 
 
+def build_contact_response() -> str:
+    return get_contact_text()
+
+
 def build_product_details_question() -> str:
     return (
         "برای اعلام قیمت/موجودی، لطفاً عکس محصول یا نام دقیق + مدل + سایز/رنگ رو بفرستید 😊"
@@ -389,6 +412,9 @@ def build_rule_based_plan(
 
     if wants_trust(normalized):
         return OutboundPlan(type="text", text=build_trust_response())
+
+    if wants_contact(normalized):
+        return OutboundPlan(type="text", text=build_contact_response())
 
     if wants_website(normalized):
         return build_website_plan()
