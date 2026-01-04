@@ -574,7 +574,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     session,
                     conversation.id,
                     normalized.sender_id,
-                    "برای اینکه اشتباه معرفی نکنم، اسم دقیق مدل یا یه عکس از محصول بفرستید؛ اگر رنگ/سایز مهمه بگید.",
+                    "برای اینکه اشتباه معرفی نکنم، لطفاً جنسیت، سایز و سبک (رسمی/اسپرت) رو بگید؛ اگر مدل خاصی مدنظرتونه اسم یا عکسش رو بفرستید.",
                     meta=_merge_meta({
                         "source": "product_match",
                         "intent": "need_details",
@@ -607,7 +607,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     session,
                     conversation.id,
                     normalized.sender_id,
-                    "برای پیشنهاد دقیق‌تر، نام یا مدل محصول رو بفرستید (یا عکسش رو ارسال کنید).",
+                    "برای معرفی دقیق‌تر، لطفاً جنسیت، سایز و سبک (رسمی/اسپرت) رو بگید؛ اگر مدل خاصی دارید اسم یا عکسش رو بفرستید.",
                     meta=_merge_meta({"source": "product_match", "intent": "no_match"}),
                 )
                 return

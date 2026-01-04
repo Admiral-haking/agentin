@@ -21,6 +21,16 @@ _STOPWORDS = {
     "سفارش",
     "مدل",
     "لیست",
+    "سایز",
+    "میخوام",
+    "می خوام",
+    "میخواهم",
+    "می خواهم",
+    "می‌خوام",
+    "می‌خواهم",
+    "میگردم",
+    "می‌گردم",
+    "دنبال",
     "product",
     "products",
     "price",
@@ -185,7 +195,7 @@ async def match_products_with_scores(
             product_tags.categories
         ):
             continue
-        if query_tags.genders and not set(query_tags.genders).intersection(
+        if query_tags.genders and product_tags.genders and not set(query_tags.genders).intersection(
             product_tags.genders
         ):
             continue

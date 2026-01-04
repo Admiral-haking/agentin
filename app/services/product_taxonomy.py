@@ -401,6 +401,21 @@ def infer_tags(text: str | None) -> TagInfo:
     for size in SIZE_KEYWORDS:
         if size in normalized:
             sizes.append(size)
+    if sizes and not genders:
+        size_numbers = []
+        for size in sizes:
+            if isinstance(size, str) and size.isdigit():
+                size_numbers.append(int(size))
+        gender_hints: list[str] = []
+        for size in size_numbers:
+            if size <= 34:
+                gender_hints.append("بچگانه")
+            elif size >= 41:
+                gender_hints.append("مردانه")
+            elif size <= 39:
+                gender_hints.append("زنانه")
+        if gender_hints:
+            genders = list(dict.fromkeys(genders + gender_hints))
 
     return TagInfo(
         categories=tuple(dict.fromkeys(categories)),

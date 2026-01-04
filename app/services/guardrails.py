@@ -103,7 +103,9 @@ PRODUCT_INTENT_KEYWORDS = {
     "چی پیشنهاد",
     "چه چیزی",
     "میخوام",
+    "می خوام",
     "میخواهم",
+    "می خواهم",
     "می‌خوام",
     "می‌خواهم",
     "میگردم",
@@ -214,10 +216,14 @@ def parse_structured_response(text: str) -> OutboundPlan | None:
         return None
 
 
+_ARABIC_FIX = str.maketrans({"ي": "ی", "ك": "ک", "‌": " "})
+
+
 def _normalize_text(text: str | None) -> str:
     if not text:
         return ""
-    return " ".join(text.strip().lower().split())
+    value = text.translate(_ARABIC_FIX).lower()
+    return " ".join(value.split())
 
 
 def _sanitize_text(text: str) -> str:
@@ -231,7 +237,8 @@ def _sanitize_text(text: str) -> str:
 
 
 def _contains_any(text: str, keywords: set[str]) -> bool:
-    return any(keyword in text for keyword in keywords)
+    normalized = _normalize_text(text)
+    return any(_normalize_text(keyword) in normalized for keyword in keywords)
 
 
 def is_greeting(text: str) -> bool:
