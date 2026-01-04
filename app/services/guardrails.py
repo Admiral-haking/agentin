@@ -136,6 +136,36 @@ ANGRY_KEYWORDS = {
     "نمیاد",
     "نیومد",
 }
+THANKS_KEYWORDS = {
+    "ممنون",
+    "مرسی",
+    "سپاس",
+    "تشکر",
+    "thx",
+    "thanks",
+    "thank you",
+}
+GOODBYE_KEYWORDS = {
+    "خداحافظ",
+    "فعلا",
+    "فعلاً",
+    "بدرود",
+    "روز بخیر",
+    "شب بخیر",
+    "bye",
+    "goodbye",
+    "see you",
+}
+DECLINE_KEYWORDS = {
+    "نمیخوام",
+    "نمی‌خوام",
+    "نمیخواهم",
+    "چیزی نمیخوام",
+    "فعلا نمیخوام",
+    "نه",
+    "خیر",
+    "بیخیال",
+}
 
 QUICK_REPLY_MENU = ["خرید", "ثبت سفارش", "مشاهده محصولات", "پشتیبانی", "آدرس شعب"]
 
@@ -242,6 +272,18 @@ def wants_trust(text: str) -> bool:
     return _contains_any(text, TRUST_KEYWORDS)
 
 
+def is_thanks(text: str) -> bool:
+    return _contains_any(text, THANKS_KEYWORDS)
+
+
+def is_goodbye(text: str) -> bool:
+    return _contains_any(text, GOODBYE_KEYWORDS)
+
+
+def is_decline(text: str) -> bool:
+    return _contains_any(text, DECLINE_KEYWORDS)
+
+
 def build_quick_reply_plan() -> OutboundPlan:
     options = [
         QuickReplyOption(title=title, payload=title) for title in QUICK_REPLY_MENU
@@ -292,6 +334,18 @@ def build_angry_response() -> str:
     return (
         "متأسفم بابت مشکلی که پیش اومده 🙏 لطفاً شماره سفارش و یک اسکرین‌شات ارسال کنید تا سریع پیگیری کنیم."
     )
+
+
+def build_thanks_response() -> str:
+    return "خواهش می‌کنم! اگر سوالی داشتید در خدمتم."
+
+
+def build_decline_response() -> str:
+    return "باشه، هر وقت سوالی داشتید خوشحال می‌شم کمک کنم."
+
+
+def build_goodbye_response() -> str:
+    return "روز خوبی داشته باشید! هر وقت سوالی بود پیام بدید."
 
 
 def build_rule_based_plan(

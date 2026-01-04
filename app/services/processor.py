@@ -25,10 +25,16 @@ from app.schemas.webhook import NormalizedMessage
 from app.knowledge.store import get_store_knowledge_text
 from app.services.app_log_store import log_event
 from app.services.guardrails import (
+    build_decline_response,
+    build_goodbye_response,
     build_rule_based_plan,
+    build_thanks_response,
     fallback_for_message_type,
     fallback_llm_text,
+    is_decline,
+    is_goodbye,
     is_greeting,
+    is_thanks,
     needs_product_details,
     plan_outbound,
     post_process,
@@ -323,7 +329,52 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 <= 1
             )
 
+            lowered = (normalized.text or "").strip().lower()
             if normalized.text:
+                store_intent = (
+                    is_greeting(lowered)
+                    or wants_website(lowered)
+                    or wants_address(lowered)
+                    or wants_hours(lowered)
+                    or wants_phone(lowered)
+                    or wants_trust(lowered)
+                )
+                if is_thanks(lowered):
+                    await send_and_store(
+                        session,
+                        conversation.id,
+                        normalized.sender_id,
+                        build_thanks_response(),
+                    )
+                    return
+                if is_decline(lowered):
+                    await send_and_store(
+                        session,
+                        conversation.id,
+                        normalized.sender_id,
+                        build_decline_response(),
+                    )
+                    return
+                if is_goodbye(lowered):
+                    await send_and_store(
+                        session,
+                        conversation.id,
+                        normalized.sender_id,
+                        build_goodbye_response(),
+                    )
+                    return
+                if store_intent:
+                    rule_plan = build_rule_based_plan(
+                        normalized.message_type,
+                        normalized.text,
+                        is_first_message,
+                    )
+                    if rule_plan:
+                        await send_plan_and_store(
+                            session, conversation.id, normalized.sender_id, rule_plan
+                        )
+                        return
+
                 pref_updates = extract_preferences(normalized.text)
                 if pref_updates:
                     profile = user.profile_json or {}
@@ -362,17 +413,8 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 limit=settings.PRODUCT_MATCH_LIMIT,
             )
             matched_products = [match.product for match in matches]
-            lowered = (normalized.text or "").strip().lower()
             wants_products = wants_product_list(normalized.text)
             needs_details = needs_product_details(lowered)
-            product_intent = wants_product_intent(lowered)
-            if (
-                query_tags.categories
-                or query_tags.genders
-                or query_tags.materials
-                or query_tags.styles
-            ):
-                product_intent = True
             store_intent = (
                 is_greeting(lowered)
                 or wants_website(lowered)
@@ -381,6 +423,17 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 or wants_phone(lowered)
                 or wants_trust(lowered)
             )
+            product_intent = wants_product_intent(lowered)
+            if (
+                not store_intent
+                and (
+                    query_tags.categories
+                    or query_tags.genders
+                    or query_tags.materials
+                    or query_tags.styles
+                )
+            ):
+                product_intent = True
             is_plain_list_request = (
                 wants_products
                 and len(tokens) <= 1

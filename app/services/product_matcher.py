@@ -121,36 +121,53 @@ async def match_products_with_scores(
         return []
     if not text:
         return []
+    query_tags = infer_tags(text)
     tokens = _tokenize(text)
-    if not tokens:
-        return []
-    terms = expand_query_terms(text)
-    terms = list(dict.fromkeys(tokens + terms))
-    if len(terms) > settings.PRODUCT_MATCH_QUERY_TERMS:
-        terms = terms[: settings.PRODUCT_MATCH_QUERY_TERMS]
-    conditions = []
-    for token in terms:
-        like = f"%{token}%"
-        conditions.extend(
-            [
-                Product.slug.ilike(like),
-                Product.title.ilike(like),
-                Product.description.ilike(like),
-                Product.product_id.ilike(like),
-            ]
-        )
-    if not conditions:
+    if not tokens and not (
+        query_tags.categories
+        or query_tags.genders
+        or query_tags.materials
+        or query_tags.styles
+        or query_tags.colors
+        or query_tags.sizes
+    ):
         return []
 
-    query = (
-        select(Product)
-        .where(or_(*conditions))
-        .order_by(Product.updated_at.desc())
-        .limit(settings.PRODUCT_MATCH_CANDIDATES)
-    )
-    result = await session.execute(query)
-    candidates = list(result.scalars().all())
-    query_tags = infer_tags(text)
+    candidates: list[Product] = []
+    if tokens:
+        terms = expand_query_terms(text)
+        terms = list(dict.fromkeys(tokens + terms))
+        if len(terms) > settings.PRODUCT_MATCH_QUERY_TERMS:
+            terms = terms[: settings.PRODUCT_MATCH_QUERY_TERMS]
+        conditions = []
+        for token in terms:
+            like = f"%{token}%"
+            conditions.extend(
+                [
+                    Product.slug.ilike(like),
+                    Product.title.ilike(like),
+                    Product.description.ilike(like),
+                    Product.product_id.ilike(like),
+                ]
+            )
+        if conditions:
+            query = (
+                select(Product)
+                .where(or_(*conditions))
+                .order_by(Product.updated_at.desc())
+                .limit(settings.PRODUCT_MATCH_CANDIDATES)
+            )
+            result = await session.execute(query)
+            candidates = list(result.scalars().all())
+
+    if not candidates:
+        query = (
+            select(Product)
+            .order_by(Product.updated_at.desc())
+            .limit(settings.PRODUCT_MATCH_CANDIDATES)
+        )
+        result = await session.execute(query)
+        candidates = list(result.scalars().all())
     scored: list[tuple[int, datetime | None, Product, list[str], list[str]]] = []
     for product in candidates:
         product_text = " ".join(
@@ -188,6 +205,8 @@ async def match_products_with_scores(
             ("gen", set(query_tags.genders).intersection(product_tags.genders)),
             ("mat", set(query_tags.materials).intersection(product_tags.materials)),
             ("sty", set(query_tags.styles).intersection(product_tags.styles)),
+            ("col", set(query_tags.colors).intersection(product_tags.colors)),
+            ("siz", set(query_tags.sizes).intersection(product_tags.sizes)),
         ):
             for value in values:
                 matched_tags.append(f"{label}:{value}")
