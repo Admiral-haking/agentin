@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     MAX_TEMPLATE_SLIDES: int = 10
     QUICK_REPLY_TITLE_MAX_CHARS: int = 20
     QUICK_REPLY_PAYLOAD_MAX_CHARS: int = 20
+    MESSAGE_DEBOUNCE_SEC: float = 1.2
 
     JWT_SECRET_KEY: str = "change-me"
     JWT_ALGORITHM: str = "HS256"

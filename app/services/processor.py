@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from datetime import datetime
@@ -526,6 +527,33 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 commit=False,
             )
             await session.commit()
+
+            if (
+                role == "user"
+                and normalized.message_type != "read"
+                and settings.MESSAGE_DEBOUNCE_SEC > 0
+            ):
+                await asyncio.sleep(settings.MESSAGE_DEBOUNCE_SEC)
+                newer = await session.execute(
+                    select(Message.id)
+                    .where(Message.conversation_id == conversation.id)
+                    .where(Message.role == "user")
+                    .where(Message.type != "read")
+                    .where(Message.id > record.id)
+                    .limit(1)
+                )
+                if newer.scalar_one_or_none():
+                    await log_event(
+                        session,
+                        level="info",
+                        event_type="debounce_skip",
+                        data={
+                            "conversation_id": conversation.id,
+                            "message_id": record.id,
+                            "sender_id": normalized.sender_id,
+                        },
+                    )
+                    return
 
             analysis_text = ""
             analysis_payload: dict[str, Any] | None = None

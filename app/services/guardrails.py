@@ -62,6 +62,12 @@ HOURS_KEYWORDS = {
     "ساعت کار",
     "ساعت چند",
     "چه ساعتی",
+    "زمان حضور",
+    "ساعت حضور",
+    "چه زمانی حضور",
+    "حضور دارین",
+    "حضور دارید",
+    "تا چه ساعتی",
     "باز هستین",
     "باز هستید",
     "تایم",
@@ -72,6 +78,8 @@ PHONE_KEYWORDS = {
     "تلفن",
     "تماس",
     "شماره تماس",
+    "شماره تماس ها",
+    "شماره تماس‌ها",
     "پشتیبانی تلفنی",
 }
 CONTACT_KEYWORDS = {
@@ -80,6 +88,8 @@ CONTACT_KEYWORDS = {
     "راه‌های ارتباطی",
     "راه تماس",
     "شماره پشتیبانی",
+    "شماره ها",
+    "شماره‌ها",
     "ارتباط با",
     "پشتیبانی",
     "راه ارتباط",
@@ -533,7 +543,7 @@ def build_rule_based_plan(
     if wants_trust(normalized):
         return OutboundPlan(type="text", text=build_trust_response())
 
-    if wants_contact(normalized):
+    if wants_contact(normalized) or wants_phone(normalized):
         return build_contact_plan()
 
     if wants_website(normalized):
@@ -544,9 +554,6 @@ def build_rule_based_plan(
 
     if wants_hours(normalized):
         return OutboundPlan(type="text", text=build_hours_response())
-
-    if wants_phone(normalized):
-        return OutboundPlan(type="text", text=build_phone_response())
 
     if is_angry(normalized):
         return OutboundPlan(type="text", text=build_angry_response())
