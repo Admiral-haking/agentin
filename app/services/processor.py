@@ -90,6 +90,9 @@ REQUIRED_FIELD_LABELS = {
 PRODUCT_URL_HOSTS = {"ghlbedovom.com"}
 PRODUCT_URL_PREFIX = "/product/"
 PRODUCT_URL_RE = re.compile(r"https?://[^\s)]+")
+QUESTION_MARK_RE = re.compile(r"[؟?]")
+REPEAT_CLEAN_RE = re.compile(r"[^\w\u0600-\u06FF ]+")
+QUESTION_SENTENCE_RE = re.compile(r"[^؟?]*[؟?]")
 
 
 def _extract_product_slug(text: str | None) -> str | None:
@@ -135,6 +138,56 @@ def _build_more_products_plan() -> OutboundPlan:
         text="اگر ادامه می‌خواهید بنویسید «ادامه».",
         quick_replies=[QuickReplyOption(title="ادامه", payload="ادامه")],
     )
+
+
+def _limit_questions(text: str, max_questions: int) -> str:
+    if not text:
+        return text
+    if max_questions < 0:
+        return text
+    parts = re.split(r"([؟?])", text)
+    if len(parts) <= 1:
+        return text
+    result: list[str] = []
+    question_count = 0
+    for idx in range(0, len(parts), 2):
+        sentence = parts[idx]
+        mark = parts[idx + 1] if idx + 1 < len(parts) else ""
+        if mark:
+            question_count += 1
+            if question_count <= max_questions:
+                result.append(sentence + mark)
+            else:
+                if sentence.strip():
+                    result.append(sentence.strip())
+        else:
+            result.append(sentence)
+    cleaned = "".join(result).strip()
+    return cleaned or text
+
+
+def _normalize_repeat(text: str) -> str:
+    cleaned = REPEAT_CLEAN_RE.sub(" ", text.lower())
+    return " ".join(cleaned.split())
+
+
+def _is_repetitive_reply(text: str, last_text: str | None) -> bool:
+    if not text or not last_text:
+        return False
+    current = _normalize_repeat(text)
+    previous = _normalize_repeat(last_text)
+    if not current or not previous:
+        return False
+    if current == previous:
+        return True
+    if current in previous or previous in current:
+        return len(current.split()) >= 4 and len(previous.split()) >= 4
+    current_tokens = set(current.split())
+    previous_tokens = set(previous.split())
+    if not current_tokens or not previous_tokens:
+        return False
+    overlap = len(current_tokens & previous_tokens) / len(current_tokens | previous_tokens)
+    return overlap >= 0.9 and len(current_tokens) >= 4
 
 
 async def _update_product_state(
@@ -264,6 +317,33 @@ def _format_required_question(missing: list[str], known: dict[str, str]) -> str:
     else:
         ask = "، ".join(labels[:-1]) + " و " + labels[-1]
     return prefix + f"برای معرفی دقیق‌تر، لطفاً {ask} رو بگید."
+
+
+def _format_required_question_alt(missing: list[str], known: dict[str, str]) -> str:
+    known_parts = []
+    for key, label in (("gender", "جنسیت"), ("size", "سایز"), ("style", "سبک"), ("budget", "بازه قیمت")):
+        if key in known:
+            known_parts.append(f"{label}: {known[key]}")
+    prefix = ""
+    if known_parts:
+        prefix = f"{' | '.join(known_parts)}. "
+    labels = [REQUIRED_FIELD_LABELS[field] for field in missing] if missing else []
+    if not labels:
+        return prefix + "برای معرفی دقیق‌تر، لطفاً اسم دقیق مدل یا عکسش رو بفرستید."
+    if len(labels) == 1:
+        ask = labels[0]
+    elif len(labels) == 2:
+        ask = " و ".join(labels)
+    else:
+        ask = "، ".join(labels[:-1]) + " و " + labels[-1]
+    return prefix + f"برای اینکه دقیق پیشنهاد بدم، فقط {ask} رو بفرستید."
+
+
+def _last_assistant_text(history: list[Message]) -> str | None:
+    for item in reversed(history):
+        if item.role == "assistant" and item.content_text:
+            return item.content_text.strip()
+    return None
 
 
 def _contains_required_fields(text: str, missing: list[str]) -> bool:
@@ -601,6 +681,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             history = await get_recent_history(
                 session, conversation.id, history_limit
             )
+            last_assistant_text = _last_assistant_text(history)
             is_first_message = (
                 sum(1 for msg in history if msg.role == "user" and msg.type != "read")
                 <= 1
@@ -1083,6 +1164,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 required_fields, required_known = _missing_required_fields(query_tags, prefs)
                 if required_fields:
                     required_question_text = _format_required_question(required_fields, required_known)
+                    required_question_text = _limit_questions(required_question_text, 1)
             low_confidence_block = low_confidence and bool(required_fields)
             confidence_for_cards = confidence_ok or not low_confidence_block
 
@@ -1369,6 +1451,24 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 )
 
             if reply_text:
+                allow_question = bool(
+                    order_hint_text
+                    or low_confidence_block
+                    or product_intent
+                    or needs_details
+                )
+                max_questions = 1 if allow_question else 0
+                reply_text = _limit_questions(reply_text, max_questions)
+                if last_assistant_text and _is_repetitive_reply(reply_text, last_assistant_text):
+                    if low_confidence_block and required_fields:
+                        reply_text = _format_required_question_alt(required_fields, required_known)
+                    elif store_intent:
+                        reply_text = "باشه، همین اطلاعات رو دوباره برات می‌فرستم."
+                    elif product_intent:
+                        reply_text = "چند گزینه نزدیک پیدا کردم؛ اگر جزئیات بیشتری داری بگو تا دقیق‌تر بفرستم."
+                    else:
+                        reply_text = "متوجه شدم؛ اگر جزئیات بیشتری داری بفرست تا بهتر راهنمایی کنم."
+                    reply_text = _limit_questions(reply_text, max_questions)
                 await send_and_store(
                     session,
                     conversation.id,
