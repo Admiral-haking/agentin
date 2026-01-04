@@ -45,7 +45,12 @@ async def list_messages(
     admin=Depends(require_role("admin", "staff")),
 ) -> dict:
     filters = parse_filter(filter)
-    query = select(Message, Conversation, User).join(Conversation).join(User)
+    query = (
+        select(Message, Conversation, User)
+        .select_from(Message)
+        .join(Conversation, Message.conversation_id == Conversation.id)
+        .join(User, Conversation.user_id == User.id)
+    )
 
     if "id" in filters:
         ids = filters["id"]
@@ -95,8 +100,9 @@ async def get_message(
 ) -> MessageOut:
     result = await session.execute(
         select(Message, Conversation, User)
-        .join(Conversation)
-        .join(User)
+        .select_from(Message)
+        .join(Conversation, Message.conversation_id == Conversation.id)
+        .join(User, Conversation.user_id == User.id)
         .where(Message.id == message_id)
         .limit(1)
     )
