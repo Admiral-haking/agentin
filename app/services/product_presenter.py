@@ -70,6 +70,10 @@ def _build_product_url(product: Product) -> str | None:
     return f"{parsed.scheme}://{parsed.netloc}/product/{slug}"
 
 
+def build_product_url(product: Product) -> str | None:
+    return _build_product_url(product)
+
+
 def _normalize_images(value: object | None) -> list[str]:
     if not value:
         return []

@@ -36,6 +36,7 @@ MULTISPACE_RE = re.compile(r"[ \t]{2,}")
 PUNCT_SPACE_RE = re.compile(r"\s+([،؛:!؟.,])")
 PERSIAN_LETTER_RE = re.compile(r"[\u0600-\u06FF]")
 LATIN_LETTER_RE = re.compile(r"[A-Za-z]")
+EMOJI_RE = re.compile(r"[\U0001F300-\U0001FAFF]")
 
 GREETING_KEYWORDS = {
     "سلام",
@@ -227,6 +228,37 @@ REPEAT_KEYWORDS = {
     "باز بفرست",
     "باز بگو",
 }
+LINK_KEYWORDS = {
+    "لینک محصول",
+    "لینک خرید",
+    "لینک پرداخت",
+    "لینک مستقیم",
+    "لینکش",
+    "لینک",
+    "آدرس محصول",
+}
+GENERIC_SLOT_KEYWORDS = {
+    "جنسیت",
+    "سایز",
+    "سبک",
+    "بازه قیمت",
+    "بودجه",
+    "رسمی",
+    "اسپرت",
+}
+PRODUCT_PROMPT_KEYWORDS = {
+    "مدل",
+    "سایز",
+    "رنگ",
+    "قیمت",
+    "موجودی",
+    "سبک",
+    "بازه قیمت",
+    "بودجه",
+}
+PRICE_WORDS = {"تومان", "تومن", "ریال", "هزار", "میلیون"}
+OPTION_PATTERN = re.compile(r"شماره\s*[0-9]{1,2}")
+BUDGET_PHRASE_RE = re.compile(r"\d[\d,]*\s*(هزار|میلیون)?\s*(تومان|تومن|ریال)")
 
 QUICK_REPLY_MENU = ["خرید", "ثبت سفارش", "مشاهده محصولات", "پشتیبانی", "آدرس شعب"]
 
@@ -394,6 +426,15 @@ def wants_more_products(text: str) -> bool:
 
 def wants_repeat(text: str) -> bool:
     return _contains_any(text, REPEAT_KEYWORDS)
+
+
+def wants_product_link(text: str) -> bool:
+    if not text:
+        return False
+    if wants_website(text):
+        return False
+    normalized = _normalize_text(text)
+    return any(keyword in normalized for keyword in LINK_KEYWORDS)
 
 
 def wants_trust(text: str) -> bool:
@@ -594,14 +635,19 @@ def plan_outbound(text: str) -> OutboundPlan:
     if structured:
         return structured
 
-    link_match = re.search(r"https?://\S+", text)
+    link_match = re.search(r"(https?://\S+|ghlbedovom\.com/\S+)", text)
     if link_match:
         url = link_match.group(0).rstrip(").,")
+        if not url.startswith("http"):
+            url = f"https://{url.lstrip('/')}"
         button = Button(type="web_url", title="مشاهده لینک", url=url)
         return OutboundPlan(type="button", text=text, buttons=[button])
 
     if "ghlbedovom.com" in text:
-        url = get_website_url()
+        url_match = re.search(r"ghlbedovom\.com\S*", text)
+        url = url_match.group(0) if url_match else get_website_url()
+        if not url.startswith("http"):
+            url = f"https://{url.lstrip('/')}"
         button = Button(type="web_url", title="مشاهده سایت", url=url)
         return OutboundPlan(type="button", text=text, buttons=[button])
 
@@ -617,3 +663,150 @@ def plan_outbound(text: str) -> OutboundPlan:
         return OutboundPlan(type="quick_reply", text=text, quick_replies=quick_replies)
 
     return OutboundPlan(type="text", text=text)
+
+
+def _limit_questions(text: str, max_questions: int) -> str:
+    if not text:
+        return text
+    if max_questions < 0:
+        return text
+    parts = re.split(r"([؟?])", text)
+    if len(parts) <= 1:
+        return text
+    result: list[str] = []
+    question_count = 0
+    for idx in range(0, len(parts), 2):
+        sentence = parts[idx]
+        mark = parts[idx + 1] if idx + 1 < len(parts) else ""
+        if mark:
+            question_count += 1
+            if question_count <= max_questions:
+                result.append(sentence + mark)
+            else:
+                if sentence.strip():
+                    result.append(sentence.strip())
+        else:
+            result.append(sentence)
+    cleaned = "".join(result).strip()
+    return cleaned or text
+
+
+def _limit_sentences(text: str, max_sentences: int) -> str:
+    if not text or max_sentences <= 0:
+        return text
+    parts = re.split(r"[.!؟?\n]+", text.strip())
+    if len(parts) <= max_sentences:
+        return text
+    return " ".join(part.strip() for part in parts[:max_sentences] if part.strip()).strip()
+
+
+def _limit_emojis(text: str, max_emojis: int) -> str:
+    if not text or max_emojis < 0:
+        return text
+    count = 0
+    output = []
+    for ch in text:
+        if EMOJI_RE.match(ch):
+            count += 1
+            if count > max_emojis:
+                continue
+        output.append(ch)
+    return "".join(output)
+
+
+def _looks_like_generic_slot_prompt(text: str) -> bool:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return False
+    hits = sum(1 for keyword in GENERIC_SLOT_KEYWORDS if keyword in normalized)
+    return hits >= 2
+
+
+def _looks_like_product_prompt(text: str) -> bool:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return False
+    return any(keyword in normalized for keyword in PRODUCT_PROMPT_KEYWORDS)
+
+
+def _extract_budget_phrase(text: str) -> str | None:
+    if not text:
+        return None
+    match = BUDGET_PHRASE_RE.search(text)
+    if not match:
+        return None
+    return match.group(0).strip()
+
+
+def _contains_price(text: str) -> bool:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return False
+    if any(word in normalized for word in PRICE_WORDS):
+        return True
+    return bool(re.search(r"\d{3,}", normalized))
+
+
+def validate_reply_or_rewrite(
+    plan: OutboundPlan,
+    state: dict[str, object] | None,
+    user_message: str | None,
+    *,
+    has_products_context: bool,
+    allow_generic_slots: bool,
+) -> tuple[OutboundPlan, list[str]]:
+    reasons: list[str] = []
+    if plan.type not in {"text", "button", "quick_reply"}:
+        return plan, reasons
+    text = plan.text or ""
+    normalized_user = _normalize_text(user_message)
+    selected_product = None
+    if isinstance(state, dict):
+        selected_product = state.get("selected_product")
+
+    if wants_product_link(normalized_user):
+        page_url = None
+        if isinstance(selected_product, dict):
+            page_url = selected_product.get("page_url") or selected_product.get("url")
+        if isinstance(page_url, str) and page_url.strip():
+            reply = f"حتماً 🙂 لینک مستقیم محصول: {page_url.strip()}"
+            return OutboundPlan(type="text", text=reply), ["link_request_handled"]
+        reply = "برای ارسال لینک، لطفاً اسم دقیق مدل یا یک عکس/لینک از محصول بفرستید."
+        return OutboundPlan(type="text", text=reply), ["link_request_missing"]
+
+    if selected_product and _looks_like_generic_slot_prompt(text):
+        reply = "برای ثبت سفارش، لطفاً سایز/رنگ و تعداد مدنظرتون رو بگید."
+        return OutboundPlan(type="text", text=reply), ["template_blocked:selected_product"]
+
+    intent = None
+    category = None
+    if isinstance(state, dict):
+        intent = state.get("intent")
+        category = state.get("category")
+
+    if intent == "store_info" and _looks_like_product_prompt(text):
+        reply = "بفرمایید دقیقاً کدوم اطلاعات فروشگاه مدنظرتونه؟"
+        return OutboundPlan(type="text", text=reply), ["template_blocked:store_info"]
+
+    if not allow_generic_slots and _looks_like_generic_slot_prompt(text):
+        reply = "برای معرفی دقیق‌تر، لطفاً نوع و رنگ مدنظرتون رو بفرستید."
+        return OutboundPlan(type="text", text=reply), ["template_blocked:category_slots"]
+
+    if not has_products_context and not selected_product:
+        if _contains_price(text):
+            reply = "برای اعلام قیمت دقیق، لطفاً اسم/مدل محصول یا یک عکس بفرستید."
+            return OutboundPlan(type="text", text=reply), ["hallucination_prevented:price"]
+        if OPTION_PATTERN.search(text):
+            reply = "برای معرفی دقیق، لطفاً اسم مدل یا عکس محصول را بفرستید."
+            return OutboundPlan(type="text", text=reply), ["hallucination_prevented:options"]
+
+    budget_phrase = _extract_budget_phrase(user_message or "")
+    if budget_phrase and _contains_price(text) and budget_phrase not in text:
+        reply = f"اوکی، بازه قیمت مدنظرتون {budget_phrase} هست. مدل دقیق یا عکسش رو بفرستید."
+        return OutboundPlan(type="text", text=reply), ["budget_reflected"]
+
+    text = _limit_questions(text, 1)
+    text = _limit_sentences(text, 4)
+    text = _limit_emojis(text, 1)
+    plan.text = text
+    return plan, reasons

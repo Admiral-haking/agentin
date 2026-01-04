@@ -32,10 +32,12 @@ export const AiContextPage = () => {
   const [simulateResult, setSimulateResult] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [clearNotice, setClearNotice] = useState<string | null>(null);
 
   const loadContext = async () => {
     setLoading(true);
     setError(null);
+    setClearNotice(null);
     try {
       const query = new URLSearchParams();
       if (conversationId.trim()) {
@@ -65,6 +67,7 @@ export const AiContextPage = () => {
   const handleSimulate = async () => {
     setLoading(true);
     setError(null);
+    setClearNotice(null);
     try {
       if (!conversationId.trim()) {
         throw new Error('برای شبیه‌سازی باید conversation_id وارد شود.');
@@ -91,6 +94,33 @@ export const AiContextPage = () => {
   };
 
   const sections = result?.sections || {};
+  const conversationState = sections.conversation_state_payload;
+  const decisionEvents = Array.isArray(sections.decision_events)
+    ? sections.decision_events
+    : [];
+
+  const handleClearState = async () => {
+    setLoading(true);
+    setError(null);
+    setClearNotice(null);
+    try {
+      if (!conversationId.trim()) {
+        throw new Error('برای پاک‌کردن وضعیت باید conversation_id وارد شود.');
+      }
+      await fetchJson(
+        `${API_URL}/admin/ai/clear_state?conversation_id=${conversationId.trim()}`,
+        { method: 'POST' },
+        'پاک‌کردن وضعیت ناموفق بود.'
+      );
+      await loadContext();
+      setClearNotice('وضعیت گفتگو پاک شد.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'پاک‌کردن وضعیت ناموفق بود.';
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
     <Box sx={{ px: { xs: 2, md: 3 }, py: 2 }}>
@@ -128,6 +158,14 @@ export const AiContextPage = () => {
             </Stack>
             <Button variant="contained" onClick={loadContext} disabled={loading}>
               دریافت کانتکست
+            </Button>
+            <Button
+              variant="outlined"
+              color="warning"
+              onClick={handleClearState}
+              disabled={loading}
+            >
+              پاک‌کردن وضعیت گفتگو
             </Button>
           </Stack>
         </CardContent>
@@ -175,6 +213,14 @@ export const AiContextPage = () => {
         </Card>
       )}
 
+      {clearNotice && (
+        <Card sx={{ mb: 2 }}>
+          <CardContent>
+            <Typography color="success.main">{clearNotice}</Typography>
+          </CardContent>
+        </Card>
+      )}
+
       {result && (
         <Stack spacing={2}>
           <Card>
@@ -187,6 +233,72 @@ export const AiContextPage = () => {
               <Typography variant="body2" color="text.secondary">
                 نام کاربری: {result.user.username || '-'}
               </Typography>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent>
+              <Typography variant="h6">وضعیت گفتگو</Typography>
+              <Divider sx={{ my: 1 }} />
+              <Box
+                component="pre"
+                sx={{
+                  whiteSpace: 'pre-wrap',
+                  fontFamily: 'monospace',
+                  fontSize: '0.85rem',
+                  backgroundColor: 'rgba(0,0,0,0.04)',
+                  padding: 2,
+                  borderRadius: 1,
+                  maxHeight: 240,
+                  overflow: 'auto',
+                }}
+              >
+                {conversationState
+                  ? JSON.stringify(conversationState, null, 2)
+                  : '-'}
+              </Box>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent>
+              <Typography variant="h6">رویدادهای تصمیم</Typography>
+              <Divider sx={{ my: 1 }} />
+              <Stack spacing={1}>
+                {decisionEvents.length === 0 && (
+                  <Typography variant="body2" color="text.secondary">
+                    رویدادی ثبت نشده است.
+                  </Typography>
+                )}
+                {decisionEvents.map((event: any, index: number) => (
+                  <Box
+                    key={`${event.event_type || 'event'}-${index}`}
+                    sx={{
+                      backgroundColor: 'rgba(0,0,0,0.04)',
+                      borderRadius: 1,
+                      padding: 1.5,
+                    }}
+                  >
+                    <Typography variant="subtitle2">
+                      {event.event_type || 'event'}
+                    </Typography>
+                    <Typography variant="caption" color="text.secondary">
+                      {event.created_at || '-'}
+                    </Typography>
+                    <Box
+                      component="pre"
+                      sx={{
+                        whiteSpace: 'pre-wrap',
+                        fontFamily: 'monospace',
+                        fontSize: '0.75rem',
+                        margin: 0,
+                      }}
+                    >
+                      {event.data ? JSON.stringify(event.data, null, 2) : '-'}
+                    </Box>
+                  </Box>
+                ))}
+              </Stack>
             </CardContent>
           </Card>
 

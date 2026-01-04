@@ -1,7 +1,7 @@
 """bot settings notes and followups
 
 Revision ID: 0007_bot_settings_notes_followup
-Revises: 0006_conversation_state_behavior_followups
+Revises: 0006_conv_state_followups
 Create Date: 2026-01-04 18:30:00
 """
 
@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "0007_bot_settings_notes_followup"
-down_revision = "0006_conversation_state_behavior_followups"
+down_revision = "0006_conv_state_followups"
 branch_labels = None
 depends_on = None
 

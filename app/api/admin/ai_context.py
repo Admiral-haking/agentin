@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import Integer, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import require_role
 from app.core.database import get_session
 from app.knowledge.store import get_store_knowledge_text
+from app.models.app_log import AppLog
 from app.models.conversation_state import ConversationState
 from app.models.message import Message
 from app.models.bot_settings import BotSettings
@@ -27,6 +28,7 @@ from app.services.prompts import load_prompt
 from app.services.campaigns import get_active_campaigns
 from app.services.faqs import get_verified_faqs
 from app.services.conversation_state import build_state_payload
+from app.services.app_log_store import log_event
 from app.services.product_matcher import match_products_with_scores
 from app.services.llm_clients import LLMError, generate_reply
 from app.services.llm_router import choose_provider
@@ -110,6 +112,45 @@ async def get_ai_context(
         logs = await get_recent_response_logs(session, conversation.id, 5)
         response_log_summary = build_response_log_summary(logs)
 
+    decision_events: list[dict[str, object]] = []
+    if conversation:
+        result = await session.execute(
+            select(AppLog)
+            .where(
+                AppLog.event_type.in_(
+                    {
+                        "intent_detected",
+                        "state_updated",
+                        "slots_needed",
+                        "product_matched",
+                        "selected_product_locked",
+                        "link_request_handled",
+                        "reply_rewritten_by_guardrail",
+                        "template_blocked",
+                        "hallucination_prevented",
+                        "loop_detected",
+                    }
+                )
+            )
+            .where(
+                cast(AppLog.data["conversation_id"].astext, Integer)
+                == conversation.id
+            )
+            .order_by(AppLog.created_at.desc())
+            .limit(30)
+        )
+        decision_events = [
+            {
+                "event_type": log.event_type,
+                "message": log.message,
+                "data": log.data,
+                "created_at": log.created_at.isoformat()
+                if log.created_at
+                else None,
+            }
+            for log in result.scalars().all()
+        ]
+
     campaigns = await get_active_campaigns(session)
     faqs = await get_verified_faqs(session)
 
@@ -130,6 +171,7 @@ async def get_ai_context(
     sections = dict(bundle.sections)
     sections["behavior_snapshot"] = behavior_snapshot
     sections["conversation_state_payload"] = conversation_state_payload
+    sections["decision_events"] = decision_events
     sections["recent_messages_raw"] = [
         {
             "role": msg.role,
@@ -145,6 +187,25 @@ async def get_ai_context(
         context=bundle.system_prompt,
         sections=sections,
     )
+
+
+@router.post("/clear_state")
+async def clear_state(
+    conversation_id: int = Query(gt=0),
+    session: AsyncSession = Depends(get_session),
+    admin=Depends(require_role("admin")),
+) -> dict[str, str]:
+    state = await session.get(ConversationState, conversation_id)
+    if state:
+        await session.delete(state)
+        await session.commit()
+        await log_event(
+            session,
+            level="info",
+            event_type="state_cleared",
+            data={"conversation_id": conversation_id},
+        )
+    return {"status": "ok"}
 
 
 @router.post("/simulate_reply", response_model=AISimulateOut)

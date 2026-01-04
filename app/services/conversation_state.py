@@ -24,9 +24,10 @@ from app.utils.time import utc_now
 
 INTENT_STORE_INFO = "store_info"
 INTENT_PRODUCT = "product_search"
+INTENT_PRODUCT_SELECTED = "product_selected"
 INTENT_SUPPORT = "support"
-INTENT_ORDER = "order"
-INTENT_SMALLTALK = "smalltalk"
+INTENT_ORDER = "order_flow"
+INTENT_UNKNOWN = "unknown"
 
 CATEGORY_SHOES = "shoes"
 CATEGORY_APPAREL = "apparel"
@@ -65,8 +66,8 @@ def infer_intent(
     if product_intent:
         return INTENT_PRODUCT
     if is_greeting(lowered) or is_thanks(lowered) or is_decline(lowered) or is_goodbye(lowered):
-        return INTENT_SMALLTALK
-    return INTENT_SMALLTALK
+        return INTENT_UNKNOWN
+    return INTENT_UNKNOWN
 
 
 def infer_category(text: str | None) -> str:
@@ -105,18 +106,32 @@ async def get_or_create_state(
 async def update_state(
     session: AsyncSession,
     conversation_id: int,
-    current_intent: str,
-    current_category: str,
-    required_slots: list[str] | None,
-    filled_slots: dict[str, Any] | None,
+    intent: str,
+    category: str,
+    slots_required: list[str] | None,
+    slots_filled: dict[str, Any] | None,
     last_user_question: str | None,
+    *,
+    state: ConversationState | None = None,
+    selected_product: dict[str, Any] | None = None,
+    preserve_selected_product: bool = True,
+    last_user_message_id: int | None = None,
 ) -> ConversationState:
-    state = await get_or_create_state(session, conversation_id)
-    state.current_intent = current_intent
-    state.current_category = current_category
-    state.required_slots = required_slots
-    state.filled_slots = filled_slots
+    state = state or await get_or_create_state(session, conversation_id)
+    effective_selected = selected_product
+    if preserve_selected_product and selected_product is None:
+        effective_selected = state.selected_product
+    if effective_selected and intent not in {INTENT_PRODUCT_SELECTED, INTENT_ORDER}:
+        intent = INTENT_PRODUCT_SELECTED
+    state.intent = intent
+    state.category = category
+    state.slots_required = slots_required
+    state.slots_filled = slots_filled
     state.last_user_question = (last_user_question or "")[:500] or None
+    if not preserve_selected_product or selected_product is not None:
+        state.selected_product = selected_product
+    if last_user_message_id is not None:
+        state.last_user_message_id = last_user_message_id
     state.updated_at = utc_now()
     await session.commit()
     return state
@@ -130,10 +145,14 @@ async def record_bot_action(
 ) -> None:
     state = await get_or_create_state(session, conversation_id)
     state.last_bot_action = intent
-    answers = state.last_bot_answers if isinstance(state.last_bot_answers, dict) else {}
+    answers = (
+        state.last_bot_answer_by_intent
+        if isinstance(state.last_bot_answer_by_intent, dict)
+        else {}
+    )
     if answer:
         answers[intent] = answer[:800]
-    state.last_bot_answers = answers
+    state.last_bot_answer_by_intent = answers
     state.updated_at = utc_now()
     await session.commit()
 
@@ -142,11 +161,19 @@ def build_state_payload(state: ConversationState | None) -> dict[str, Any] | Non
     if not state:
         return None
     return {
-        "current_intent": state.current_intent,
-        "current_category": state.current_category,
-        "required_slots": state.required_slots,
-        "filled_slots": state.filled_slots,
+        "intent": state.intent,
+        "category": state.category,
+        "current_intent": state.intent,
+        "current_category": state.category,
+        "slots_required": state.slots_required,
+        "slots_filled": state.slots_filled,
+        "required_slots": state.slots_required,
+        "filled_slots": state.slots_filled,
+        "selected_product": state.selected_product,
         "last_user_question": state.last_user_question,
+        "last_user_message_id": state.last_user_message_id,
         "last_bot_action": state.last_bot_action,
+        "last_bot_answer_by_intent": state.last_bot_answer_by_intent,
         "updated_at": state.updated_at.isoformat() if isinstance(state.updated_at, datetime) else None,
+        "last_updated_at": state.updated_at.isoformat() if isinstance(state.updated_at, datetime) else None,
     }

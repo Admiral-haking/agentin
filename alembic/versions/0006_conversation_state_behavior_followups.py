@@ -1,6 +1,6 @@
 """conversation state, behavior profiles, support tickets, followups
 
-Revision ID: 0006_conversation_state_behavior_followups
+Revision ID: 0006_conv_state_followups
 Revises: 0005_perf_indexes
 Create Date: 2026-01-04 18:00:00
 """
@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
-revision = "0006_conversation_state_behavior_followups"
+revision = "0006_conv_state_followups"
 down_revision = "0005_perf_indexes"
 branch_labels = None
 depends_on = None

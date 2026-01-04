@@ -128,13 +128,16 @@ def format_conversation_state(state_payload: dict[str, Any] | None) -> str | Non
         return None
     lines = []
     for key in (
-        "current_intent",
-        "current_category",
-        "required_slots",
-        "filled_slots",
+        "intent",
+        "category",
+        "slots_required",
+        "slots_filled",
+        "selected_product",
         "last_user_question",
         "last_bot_action",
-        "updated_at",
+        "last_bot_answer_by_intent",
+        "last_user_message_id",
+        "last_updated_at",
     ):
         value = state_payload.get(key)
         if value is None:
