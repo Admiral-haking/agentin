@@ -16,7 +16,7 @@ import {
 import SendRoundedIcon from '@mui/icons-material/SendRounded';
 import PersonSearchRoundedIcon from '@mui/icons-material/PersonSearchRounded';
 import { Title } from 'react-admin';
-import { fetchWithAuth } from '../authProvider';
+import { fetchJson } from '../utils/api';
 
 const DEFAULT_API_URL = import.meta.env.DEV
   ? 'http://localhost:8000'
@@ -143,16 +143,16 @@ export const DirectamConsole = () => {
     setSendResult(null);
     try {
       const payload = buildPayload();
-      const response = await fetchWithAuth(`${API_URL}/admin/directam/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data?.detail || data?.error || 'ارسال پیام ناموفق بود.');
-      }
-      setSendResult(data);
+      const data = await fetchJson(
+        `${API_URL}/admin/directam/send`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        },
+        'ارسال پیام ناموفق بود.'
+      );
+      setSendResult(data || {});
     } catch (err) {
       const message = err instanceof Error ? err.message : 'ارسال پیام ناموفق بود.';
       setError(message);
@@ -170,19 +170,16 @@ export const DirectamConsole = () => {
       if (!userId) {
         throw new Error('شناسه کاربر را وارد کنید.');
       }
-      const response = await fetchWithAuth(
+      const data = await fetchJson(
         `${API_URL}/admin/directam/instagram-user/${type}`,
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ user_id: userId }),
-        }
+        },
+        'دریافت اطلاعات ناموفق بود.'
       );
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data?.detail || data?.error || 'دریافت اطلاعات ناموفق بود.');
-      }
-      setLookupResult(data);
+      setLookupResult(data || {});
     } catch (err) {
       const message = err instanceof Error ? err.message : 'دریافت اطلاعات ناموفق بود.';
       setError(message);

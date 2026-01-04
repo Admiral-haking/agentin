@@ -21,6 +21,7 @@ import AutoAwesomeRoundedIcon from '@mui/icons-material/AutoAwesomeRounded';
 import { Link } from 'react-router-dom';
 import { Title } from 'react-admin';
 import { fetchWithAuth } from '../authProvider';
+import { fetchJson, getErrorMessage, parseResponse } from '../utils/api';
 
 const DEFAULT_API_URL = import.meta.env.DEV
   ? 'http://localhost:8000'
@@ -113,8 +114,8 @@ export const AssistantPage = () => {
       }
       const response = await fetchWithAuth(url.toString());
       if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data?.detail || 'Unable to export history.');
+        const data = await parseResponse(response);
+        throw new Error(getErrorMessage(data, 'Unable to export history.'));
       }
       const blob = await response.blob();
       const filenameBase =
@@ -157,9 +158,9 @@ export const AssistantPage = () => {
       const response = await fetchWithAuth(
         `${API_URL}/admin/assistant/conversations?${query}`
       );
-      const data = await response.json();
+      const data = await parseResponse(response);
       if (!response.ok) {
-        throw new Error(data?.detail || 'Unable to load conversations.');
+        throw new Error(getErrorMessage(data, 'Unable to load conversations.'));
       }
       setConversations(data.data || []);
       if (!activeConversationId && data.data?.length) {
@@ -180,11 +181,12 @@ export const AssistantPage = () => {
         order: 'desc',
         filter: JSON.stringify({ status: 'pending' }),
       });
-      const response = await fetchWithAuth(`${API_URL}/admin/assistant/actions?${query}`);
-      const data = await response.json();
-      if (response.ok) {
-        setPendingActions(data.total || 0);
-      }
+      const data = await fetchJson(
+        `${API_URL}/admin/assistant/actions?${query}`,
+        {},
+        'Unable to load actions.'
+      );
+      setPendingActions(data.total || 0);
     } catch {
       setPendingActions(0);
     }
@@ -194,20 +196,18 @@ export const AssistantPage = () => {
     setLoading(true);
     setError(null);
     try {
-      const [conversationRes, messagesRes] = await Promise.all([
-        fetchWithAuth(`${API_URL}/admin/assistant/conversations/${conversationId}`),
-        fetchWithAuth(
-          `${API_URL}/admin/assistant/conversations/${conversationId}/messages?skip=0&limit=300&sort=created_at&order=asc`
+      const [conversationData, messagesData] = await Promise.all([
+        fetchJson(
+          `${API_URL}/admin/assistant/conversations/${conversationId}`,
+          {},
+          'Unable to load conversation.'
+        ),
+        fetchJson(
+          `${API_URL}/admin/assistant/conversations/${conversationId}/messages?skip=0&limit=300&sort=created_at&order=asc`,
+          {},
+          'Unable to load messages.'
         ),
       ]);
-      const conversationData = await conversationRes.json();
-      const messagesData = await messagesRes.json();
-      if (!conversationRes.ok) {
-        throw new Error(conversationData?.detail || 'Unable to load conversation.');
-      }
-      if (!messagesRes.ok) {
-        throw new Error(messagesData?.detail || 'Unable to load messages.');
-      }
       setTitle(conversationData?.title || '');
       setContext(conversationData?.context || '');
       if (conversationData?.mode) {
@@ -236,7 +236,7 @@ export const AssistantPage = () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetchWithAuth(
+      await fetchJson(
         `${API_URL}/admin/assistant/conversations/${activeConversationId}`,
         {
           method: 'PUT',
@@ -246,12 +246,9 @@ export const AssistantPage = () => {
             context: context.trim() || null,
             mode,
           }),
-        }
+        },
+        'Unable to save conversation.'
       );
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data?.detail || 'Unable to save conversation.');
-      }
       await loadConversations();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unable to save conversation.';
@@ -276,21 +273,21 @@ export const AssistantPage = () => {
     setError(null);
 
     try {
-      const response = await fetchWithAuth(`${API_URL}/admin/assistant/chat`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          conversation_id: activeConversationId || undefined,
-          title: title.trim() || undefined,
-          context: context.trim() || undefined,
-          mode,
-          messages: [{ role: 'user', content: trimmed }],
-        }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data?.detail || data?.error || 'Unable to reach the assistant.');
-      }
+      const data = await fetchJson(
+        `${API_URL}/admin/assistant/chat`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            conversation_id: activeConversationId || undefined,
+            title: title.trim() || undefined,
+            context: context.trim() || undefined,
+            mode,
+            messages: [{ role: 'user', content: trimmed }],
+          }),
+        },
+        'Unable to reach the assistant.'
+      );
 
       const assistantMessage: AssistantMessage = {
         id: buildId(),
@@ -332,20 +329,20 @@ export const AssistantPage = () => {
     setError(null);
     setPayloadError(null);
     try {
-      const response = await fetchWithAuth(`${API_URL}/admin/assistant/actions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          conversation_id: activeConversationId || undefined,
-          action_type: actionSuggestion.action_type,
-          summary: actionSuggestion.summary || 'Assistant proposed change',
-          payload: parsedPayload,
-        }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data?.detail || 'Unable to queue action.');
-      }
+      await fetchJson(
+        `${API_URL}/admin/assistant/actions`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            conversation_id: activeConversationId || undefined,
+            action_type: actionSuggestion.action_type,
+            summary: actionSuggestion.summary || 'Assistant proposed change',
+            payload: parsedPayload,
+          }),
+        },
+        'Unable to queue action.'
+      );
       setActionSuggestion(null);
       await loadPendingActions();
     } catch (err) {

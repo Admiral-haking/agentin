@@ -16,7 +16,7 @@ import {
   Chip,
 } from '@mui/material';
 import { Title } from 'react-admin';
-import { fetchWithAuth } from '../authProvider';
+import { fetchJson } from '../utils/api';
 
 const DEFAULT_API_URL = import.meta.env.DEV
   ? 'http://localhost:8000'
@@ -91,11 +91,11 @@ export const UserBehaviorPage = () => {
       if (Object.keys(filterPayload).length) {
         query.set('filter', JSON.stringify(filterPayload));
       }
-      const response = await fetchWithAuth(`${API_URL}/admin/behavior/users?${query}`);
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data?.detail || 'دریافت رفتار کاربران ناموفق بود.');
-      }
+      const data = await fetchJson(
+        `${API_URL}/admin/behavior/users?${query}`,
+        {},
+        'دریافت رفتار کاربران ناموفق بود.'
+      );
       setItems(data.data || []);
       setTotal(data.total || 0);
     } catch (err) {

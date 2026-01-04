@@ -15,7 +15,7 @@ import SyncRoundedIcon from '@mui/icons-material/SyncRounded';
 import DataObjectRoundedIcon from '@mui/icons-material/DataObjectRounded';
 import { ResourceTitle } from '../components/ResourceTitle';
 import { TehranDateField } from '../components/TehranDateField';
-import { fetchWithAuth } from '../authProvider';
+import { fetchJson } from '../utils/api';
 
 const DEFAULT_API_URL = import.meta.env.DEV
   ? 'http://localhost:8000'
@@ -30,13 +30,11 @@ const UserListActions = () => {
   const handleSync = async () => {
     setLoading(true);
     try {
-      const response = await fetchWithAuth(`${API_URL}/admin/users/sync`, {
-        method: 'POST',
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data?.detail || 'Sync failed.');
-      }
+      const data = await fetchJson(
+        `${API_URL}/admin/users/sync`,
+        { method: 'POST' },
+        'Sync failed.'
+      );
       notify(`Synced: ${data.created} created, ${data.updated} updated`, { type: 'info' });
       refresh();
     } catch (error) {
@@ -54,14 +52,14 @@ const UserListActions = () => {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const response = await fetchWithAuth(`${API_URL}/admin/users/import-csv`, {
-        method: 'POST',
-        body: formData,
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data?.detail || 'Import failed.');
-      }
+      const data = await fetchJson(
+        `${API_URL}/admin/users/import-csv`,
+        {
+          method: 'POST',
+          body: formData,
+        },
+        'Import failed.'
+      );
       notify(`Imported: ${data.created} created, ${data.updated} updated`, { type: 'info' });
       refresh();
     } catch (error) {
@@ -80,14 +78,14 @@ const UserListActions = () => {
     try {
       const formData = new FormData();
       formData.append('file', file);
-      const response = await fetchWithAuth(`${API_URL}/admin/users/import-json`, {
-        method: 'POST',
-        body: formData,
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data?.detail || 'Import failed.');
-      }
+      const data = await fetchJson(
+        `${API_URL}/admin/users/import-json`,
+        {
+          method: 'POST',
+          body: formData,
+        },
+        'Import failed.'
+      );
       notify(`Imported: ${data.created} created, ${data.updated} updated`, { type: 'info' });
       refresh();
     } catch (error) {

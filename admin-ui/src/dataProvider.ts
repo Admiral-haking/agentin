@@ -1,15 +1,20 @@
 import type { DataProvider } from 'react-admin';
+import { HttpError } from 'react-admin';
 import { fetchWithAuth } from './authProvider';
+import { getErrorMessage, normalizeFieldErrors, parseResponse } from './utils/api';
 
 const DEFAULT_API_URL = import.meta.env.DEV
   ? 'http://localhost:8000'
   : 'https://api.teamcore.ir';
 const API_URL = import.meta.env.VITE_API_URL || DEFAULT_API_URL;
 
-const parseResponse = async (response: Response) => {
-  const data = await response.json();
+const parseApiResponse = async (response: Response) => {
+  const data = await parseResponse(response);
   if (!response.ok) {
-    throw new Error(data?.detail || 'Request failed');
+    const message = getErrorMessage(data, 'Request failed');
+    const fieldErrors = normalizeFieldErrors(data);
+    const body = fieldErrors ?? data ?? {};
+    throw new HttpError(message, response.status, body);
   }
   return data;
 };
@@ -33,7 +38,7 @@ const dataProvider: DataProvider = {
   getList: async (resource, params) => {
     if (resource === 'settings') {
       const response = await fetchWithAuth(`${API_URL}/admin/settings`);
-      const data = await parseResponse(response);
+      const data = await parseApiResponse(response);
       return { data: [data], total: 1 };
     }
     if (resource === 'product-sync-runs') {
@@ -41,24 +46,24 @@ const dataProvider: DataProvider = {
       const response = await fetchWithAuth(
         `${API_URL}/admin/products/sync-runs?${query}`
       );
-      const data = await parseResponse(response);
+      const data = await parseApiResponse(response);
       return { data: data.data, total: data.total };
     }
     const query = buildQuery(params);
     const response = await fetchWithAuth(`${API_URL}/admin/${resource}?${query}`);
-    const data = await parseResponse(response);
+    const data = await parseApiResponse(response);
     return { data: data.data, total: data.total };
   },
   getOne: async (resource, params) => {
     if (resource === 'settings') {
       const response = await fetchWithAuth(`${API_URL}/admin/settings`);
-      const data = await parseResponse(response);
+      const data = await parseApiResponse(response);
       return { data };
     }
     const response = await fetchWithAuth(
       `${API_URL}/admin/${resource}/${params.id}`
     );
-    const data = await parseResponse(response);
+    const data = await parseApiResponse(response);
     return { data };
   },
   getMany: async (resource, params) => {
@@ -69,24 +74,27 @@ const dataProvider: DataProvider = {
       filter,
     });
     const response = await fetchWithAuth(`${API_URL}/admin/${resource}?${query}`);
-    const data = await parseResponse(response);
+    const data = await parseApiResponse(response);
     return { data: data.data };
   },
   getManyReference: async (resource, params) => {
     const filter = { ...params.filter, [params.target]: params.id };
     const query = buildQuery({ ...params, filter });
     const response = await fetchWithAuth(`${API_URL}/admin/${resource}?${query}`);
-    const data = await parseResponse(response);
+    const data = await parseApiResponse(response);
     return { data: data.data, total: data.total };
   },
   update: async (resource, params) => {
+    if (!params.data || Object.keys(params.data).length === 0) {
+      return { data: params.previousData || params.data };
+    }
     if (resource === 'settings') {
       const response = await fetchWithAuth(`${API_URL}/admin/settings`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params.data),
       });
-      const data = await parseResponse(response);
+      const data = await parseApiResponse(response);
       return { data };
     }
     const response = await fetchWithAuth(`${API_URL}/admin/${resource}/${params.id}`, {
@@ -94,7 +102,7 @@ const dataProvider: DataProvider = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params.data),
     });
-    const data = await parseResponse(response);
+    const data = await parseApiResponse(response);
     return { data };
   },
   create: async (resource, params) => {
@@ -103,15 +111,15 @@ const dataProvider: DataProvider = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params.data),
     });
-    const data = await parseResponse(response);
-    return { data };
+    const data = await parseApiResponse(response);
+    return { data: data.data ?? data };
   },
   delete: async (resource, params) => {
     const response = await fetchWithAuth(`${API_URL}/admin/${resource}/${params.id}`, {
       method: 'DELETE',
     });
-    const data = await parseResponse(response);
-    return { data: { id: params.id, ...data } };
+    const data = await parseApiResponse(response);
+    return { data: { id: params.id, ...(data || {}) } };
   },
   updateMany: async () => ({ data: [] }),
   deleteMany: async () => ({ data: [] }),

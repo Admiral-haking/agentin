@@ -10,7 +10,7 @@ import {
   Typography,
 } from '@mui/material';
 import { Title } from 'react-admin';
-import { fetchWithAuth } from '../authProvider';
+import { fetchJson } from '../utils/api';
 
 const DEFAULT_API_URL = import.meta.env.DEV
   ? 'http://localhost:8000'
@@ -42,11 +42,11 @@ export const AiContextPage = () => {
       } else {
         throw new Error('شناسه کاربر یا external_id را وارد کنید.');
       }
-      const response = await fetchWithAuth(`${API_URL}/admin/ai/context?${query}`);
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data?.detail || 'دریافت کانتکست ناموفق بود.');
-      }
+      const data = await fetchJson(
+        `${API_URL}/admin/ai/context?${query}`,
+        {},
+        'دریافت کانتکست ناموفق بود.'
+      );
       setResult(data);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'دریافت کانتکست ناموفق بود.';

@@ -8,6 +8,7 @@ import {
   TextField,
   TextInput,
   SimpleForm,
+  required,
 } from 'react-admin';
 import { ResourceTitle } from '../components/ResourceTitle';
 
@@ -40,8 +41,8 @@ export const FaqList = () => (
 export const FaqCreate = () => (
   <Create>
     <SimpleForm>
-      <TextInput source="question" label="سوال" fullWidth />
-      <TextInput source="answer" label="پاسخ" multiline fullWidth />
+      <TextInput source="question" label="سوال" fullWidth validate={required()} />
+      <TextInput source="answer" label="پاسخ" multiline fullWidth validate={required()} />
       <TextInput source="tags" label="برچسب‌ها" helperText="با کاما جدا کنید" />
       <TextInput source="category" label="دسته" />
       <BooleanInput source="verified" label="تایید شده" />
@@ -52,8 +53,8 @@ export const FaqCreate = () => (
 export const FaqEdit = () => (
   <Edit>
     <SimpleForm>
-      <TextInput source="question" label="سوال" fullWidth />
-      <TextInput source="answer" label="پاسخ" multiline fullWidth />
+      <TextInput source="question" label="سوال" fullWidth validate={required()} />
+      <TextInput source="answer" label="پاسخ" multiline fullWidth validate={required()} />
       <TextInput source="tags" label="برچسب‌ها" helperText="با کاما جدا کنید" />
       <TextInput source="category" label="دسته" />
       <BooleanInput source="verified" label="تایید شده" />

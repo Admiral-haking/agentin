@@ -12,6 +12,8 @@ from app.models.audit_log import AuditLog
 
 
 def _serialize(value: object) -> object:
+    if value is None:
+        return None
     if isinstance(value, datetime):
         return value.isoformat()
     if isinstance(value, date):
@@ -22,6 +24,14 @@ def _serialize(value: object) -> object:
         return value.value
     if isinstance(value, UUID):
         return str(value)
+    if hasattr(value, "model_dump"):
+        return _serialize(value.model_dump(mode="json"))
+    try:
+        mapper = inspect(value)
+        payload = {attr.key: getattr(value, attr.key) for attr in mapper.mapper.column_attrs}
+        return _serialize(payload)
+    except Exception:
+        pass
     if isinstance(value, list):
         return [_serialize(item) for item in value]
     if isinstance(value, tuple):
@@ -30,7 +40,10 @@ def _serialize(value: object) -> object:
         return [_serialize(item) for item in value]
     if isinstance(value, dict):
         return {key: _serialize(val) for key, val in value.items()}
-    return value
+    try:
+        return str(value)
+    except Exception:
+        return None
 
 
 def _to_dict(value: object | None) -> dict | None:

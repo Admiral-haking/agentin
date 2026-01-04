@@ -11,7 +11,7 @@ import {
   Typography,
 } from '@mui/material';
 import { Title } from 'react-admin';
-import { fetchWithAuth } from '../authProvider';
+import { fetchJson } from '../utils/api';
 
 const DEFAULT_API_URL = import.meta.env.DEV
   ? 'http://localhost:8000'
@@ -58,11 +58,11 @@ export const HealthPage = () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetchWithAuth(`${API_URL}/admin/health/report?window_hours=24`);
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data?.detail || 'گزارش سلامت دریافت نشد.');
-      }
+      const data = await fetchJson(
+        `${API_URL}/admin/health/report?window_hours=24`,
+        {},
+        'گزارش سلامت دریافت نشد.'
+      );
       setReport(data);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'گزارش سلامت دریافت نشد.';

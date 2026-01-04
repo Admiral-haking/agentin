@@ -22,7 +22,7 @@ import {
   Typography,
 } from '@mui/material';
 import { Title } from 'react-admin';
-import { fetchWithAuth } from '../authProvider';
+import { fetchJson } from '../utils/api';
 
 const DEFAULT_API_URL = import.meta.env.DEV
   ? 'http://localhost:8000'
@@ -79,11 +79,11 @@ export const AssistantActionsPage = () => {
         order: 'desc',
       });
       if (filterQuery) query.set('filter', filterQuery);
-      const response = await fetchWithAuth(`${API_URL}/admin/assistant/actions?${query}`);
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data?.detail || 'Unable to load actions.');
-      }
+      const data = await fetchJson(
+        `${API_URL}/admin/assistant/actions?${query}`,
+        {},
+        'Unable to load actions.'
+      );
       setActions(data.data || []);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unable to load actions.';
@@ -101,14 +101,11 @@ export const AssistantActionsPage = () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetchWithAuth(
+      await fetchJson(
         `${API_URL}/admin/assistant/actions/${actionId}/${action}`,
-        { method: 'POST' }
+        { method: 'POST' },
+        'Action update failed.'
       );
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data?.detail || 'Action update failed.');
-      }
       await loadActions();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Action update failed.';
@@ -149,7 +146,7 @@ export const AssistantActionsPage = () => {
     setLoading(true);
     setEditError(null);
     try {
-      const response = await fetchWithAuth(
+      await fetchJson(
         `${API_URL}/admin/assistant/actions/${editAction.id}`,
         {
           method: 'PATCH',
@@ -158,12 +155,9 @@ export const AssistantActionsPage = () => {
             summary: editSummary || null,
             payload: parsedPayload,
           }),
-        }
+        },
+        'ویرایش اکشن ناموفق بود.'
       );
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data?.detail || 'ویرایش اکشن ناموفق بود.');
-      }
       await loadActions();
       closeEdit();
     } catch (err) {

@@ -16,12 +16,13 @@ import {
   UrlField,
   useNotify,
   useRefresh,
+  required,
 } from 'react-admin';
 import { Button, Chip, Stack, Tabs, Tab } from '@mui/material';
 import SyncRoundedIcon from '@mui/icons-material/SyncRounded';
 import { Link, useLocation } from 'react-router-dom';
 import { ResourceTitle } from '../components/ResourceTitle';
-import { fetchWithAuth } from '../authProvider';
+import { fetchJson } from '../utils/api';
 
 const DEFAULT_API_URL = import.meta.env.DEV
   ? 'http://localhost:8000'
@@ -161,12 +162,11 @@ const ProductListActions = () => {
   const refresh = useRefresh();
   const handleSync = async () => {
     try {
-      const response = await fetchWithAuth(`${API_URL}/admin/products/sync`, {
-        method: 'POST',
-      });
-      if (!response.ok) {
-        throw new Error('sync failed');
-      }
+      await fetchJson(
+        `${API_URL}/admin/products/sync`,
+        { method: 'POST' },
+        'sync failed'
+      );
       notify('همگام‌سازی شروع شد.', { type: 'info' });
       refresh();
     } catch (error) {
@@ -235,7 +235,7 @@ export const ProductList = () => (
 export const ProductCreate = () => (
   <Create>
     <SimpleForm>
-      <TextInput source="page_url" label="لینک محصول" fullWidth />
+      <TextInput source="page_url" label="لینک محصول" fullWidth validate={required()} />
       <TextInput source="title" label="عنوان" fullWidth />
       <TextInput source="slug" label="اسلاگ" />
       <TextInput source="product_id" label="مدل/شناسه توروب" />

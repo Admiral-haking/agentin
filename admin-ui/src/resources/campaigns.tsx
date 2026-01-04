@@ -12,6 +12,7 @@ import {
   TextField,
   TextInput,
   SimpleForm,
+  required,
 } from 'react-admin';
 import { ResourceTitle } from '../components/ResourceTitle';
 
@@ -46,8 +47,8 @@ export const CampaignList = () => (
 export const CampaignCreate = () => (
   <Create>
     <SimpleForm>
-      <TextInput source="title" label="عنوان" fullWidth />
-      <TextInput source="body" label="متن پیام" multiline fullWidth />
+      <TextInput source="title" label="عنوان" fullWidth validate={required()} />
+      <TextInput source="body" label="متن پیام" multiline fullWidth validate={required()} />
       <TextInput source="discount_code" label="کد تخفیف" />
       <TextInput source="link" label="لینک کمپین" fullWidth />
       <DateTimeInput source="start_at" label="زمان شروع" />
@@ -61,8 +62,8 @@ export const CampaignCreate = () => (
 export const CampaignEdit = () => (
   <Edit>
     <SimpleForm>
-      <TextInput source="title" label="عنوان" fullWidth />
-      <TextInput source="body" label="متن پیام" multiline fullWidth />
+      <TextInput source="title" label="عنوان" fullWidth validate={required()} />
+      <TextInput source="body" label="متن پیام" multiline fullWidth validate={required()} />
       <TextInput source="discount_code" label="کد تخفیف" />
       <TextInput source="link" label="لینک کمپین" fullWidth />
       <DateTimeInput source="start_at" label="زمان شروع" />

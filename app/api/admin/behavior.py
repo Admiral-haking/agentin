@@ -16,9 +16,11 @@ router = APIRouter(prefix="/admin/behavior", tags=["admin"])
 
 
 def _extract_behavior(user: User) -> UserBehaviorOut:
-    behavior = {}
+    behavior: dict = {}
     if isinstance(user.profile_json, dict):
-        behavior = user.profile_json.get("behavior") or {}
+        raw_behavior = user.profile_json.get("behavior")
+        if isinstance(raw_behavior, dict):
+            behavior = raw_behavior
     return UserBehaviorOut(
         id=user.id,
         external_id=user.external_id,

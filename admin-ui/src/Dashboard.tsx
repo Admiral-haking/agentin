@@ -2,7 +2,7 @@ import { Box, Button, Card, CardContent, Chip, Grid, Stack, Typography } from '@
 import { Link } from 'react-router-dom';
 import { useDataProvider, usePermissions } from 'react-admin';
 import { useEffect, useState } from 'react';
-import { fetchWithAuth } from './authProvider';
+import { fetchJson } from './utils/api';
 
 const productsEnabled = (import.meta.env.VITE_PRODUCTS_ENABLED || 'false') === 'true';
 const DEFAULT_API_URL = import.meta.env.DEV
@@ -15,6 +15,7 @@ export const Dashboard = () => {
   const dataProvider = useDataProvider();
   const [syncRun, setSyncRun] = useState<any | null>(null);
   const [syncLoading, setSyncLoading] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!productsEnabled) return;
@@ -33,8 +34,9 @@ export const Dashboard = () => {
   }, [dataProvider]);
 
   const handleSync = async () => {
+    setSyncError(null);
     try {
-      await fetchWithAuth(`${API_URL}/admin/products/sync`, { method: 'POST' });
+      await fetchJson(`${API_URL}/admin/products/sync`, { method: 'POST' }, 'شروع همگام‌سازی ناموفق بود.');
       setSyncLoading(true);
       const result = await dataProvider.getList('product-sync-runs', {
         pagination: { page: 1, perPage: 1 },
@@ -42,6 +44,9 @@ export const Dashboard = () => {
         filter: {},
       });
       setSyncRun(result.data?.[0] || null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'شروع همگام‌سازی ناموفق بود.';
+      setSyncError(message);
     } finally {
       setSyncLoading(false);
     }
@@ -180,6 +185,11 @@ export const Dashboard = () => {
                   ) : (
                     <Typography variant="body2" color="text.secondary">
                       هنوز گزارشی ثبت نشده است.
+                    </Typography>
+                  )}
+                  {syncError && (
+                    <Typography variant="body2" color="error">
+                      {syncError}
                     </Typography>
                   )}
                   <Stack direction="row" spacing={1}>
