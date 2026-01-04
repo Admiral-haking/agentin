@@ -10,9 +10,12 @@ from app.services.product_taxonomy import (
     infer_tags,
 )
 
+_ARABIC_FIX = str.maketrans({"ي": "ی", "ك": "ک", "‌": " "})
+
 
 def _normalize_text(text: str) -> str:
-    return " ".join(text.strip().lower().split())
+    value = text.translate(_ARABIC_FIX).lower()
+    return " ".join(value.split())
 
 
 def _parse_amount(token: str) -> int | None:

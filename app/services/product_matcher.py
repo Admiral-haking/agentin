@@ -44,7 +44,9 @@ def _tokenize(text: str) -> list[str]:
     return [
         token
         for token in tokens
-        if len(token) >= 3 and token not in _STOPWORDS
+        if len(token) >= 3
+        and token not in _STOPWORDS
+        and not (token.isdigit() and len(token) <= 3)
     ]
 
 

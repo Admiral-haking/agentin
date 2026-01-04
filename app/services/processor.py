@@ -67,6 +67,7 @@ from app.services.behavior_analyzer import (
 from app.services.product_presenter import build_product_plan, wants_product_list
 from app.services.product_taxonomy import infer_tags
 from app.services.prompts import load_prompt
+from app.services.media_analyzer import analyze_image_url, is_likely_image_url
 from app.services.sender import Sender, SenderError
 from app.services.user_profile import extract_preferences
 from app.utils.time import parse_timestamp, utc_now
@@ -229,6 +230,17 @@ def _rank_products_by_prefs(
     budget_max = prefs.get("budget_max") if isinstance(prefs.get("budget_max"), int) else None
     if not tokens and budget_min is None and budget_max is None:
         return products
+    if budget_min is not None or budget_max is not None:
+        in_budget = []
+        for product in products:
+            if product.price is None:
+                continue
+            if (budget_min is None or product.price >= budget_min) and (
+                budget_max is None or product.price <= budget_max
+            ):
+                in_budget.append(product)
+        if in_budget:
+            products = in_budget
     scored: list[tuple[int, datetime, Product]] = []
     for product in products:
         haystack = " ".join(
@@ -423,7 +435,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             conversation = await get_or_create_conversation(session, user.id)
             role = "admin" if normalized.is_admin else "user"
 
-            await save_message(session, conversation.id, normalized, role)
+            record = await save_message(session, conversation.id, normalized, role)
             if role == "user" and normalized.message_type != "read":
                 conversation.last_user_message_at = normalized.timestamp or utc_now()
             await log_event(
@@ -438,6 +450,30 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 commit=False,
             )
             await session.commit()
+
+            analysis_text = ""
+            analysis_payload: dict[str, Any] | None = None
+            if (
+                not normalized.is_admin
+                and normalized.media_url
+                and is_likely_image_url(normalized.media_url)
+                and (not normalized.text or _is_low_signal(normalized.text))
+            ):
+                analysis = await analyze_image_url(
+                    normalized.media_url,
+                    normalized.text,
+                )
+                if analysis:
+                    analysis_text = (
+                        analysis.get("analysis_text")
+                        or analysis.get("summary")
+                        or ""
+                    )
+                    analysis_payload = analysis
+                    payload = record.payload_json or {}
+                    payload["media_analysis"] = analysis
+                    record.payload_json = payload
+                    await session.commit()
 
             if normalized.is_admin:
                 logger.info("admin_ignored", sender_id=normalized.sender_id)
@@ -483,12 +519,15 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 return merged
 
             llm_first_all = settings.LLM_FIRST_ALL
-            lowered = (normalized.text or "").strip().lower()
-            if normalized.text:
+            intent_text = (normalized.text or "").strip()
+            query_text = " ".join(part for part in [intent_text, analysis_text] if part).strip()
+            lowered = intent_text.lower()
+            behavior_input = intent_text or analysis_text
+            if behavior_input:
                 behavior_match, behavior_summary, behavior_recent = await analyze_user_behavior(
                     session,
                     user.id,
-                    normalized.text,
+                    behavior_input,
                     settings.BEHAVIOR_HISTORY_LIMIT,
                 )
                 profile = user.profile_json if isinstance(user.profile_json, dict) else {}
@@ -497,7 +536,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     behavior_match,
                     behavior_summary,
                     behavior_recent,
-                    normalized.text,
+                    behavior_input,
                     previous=previous_behavior if isinstance(previous_behavior, dict) else None,
                 )
                 if behavior_profile:
@@ -607,8 +646,8 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             if behavior_context is None and isinstance(user.profile_json, dict):
                 behavior_context = build_behavior_context(user.profile_json.get("behavior"))
 
-            if normalized.text:
-                pref_updates = extract_preferences(normalized.text)
+            if query_text:
+                pref_updates = extract_preferences(query_text)
                 if pref_updates:
                     profile = user.profile_json or {}
                     prefs = profile.get("prefs", {}) if isinstance(profile, dict) else {}
@@ -631,7 +670,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         user.profile_json = profile
                         await session.commit()
 
-            order_plan = await handle_order_flow(session, user, normalized.text)
+            order_plan = await handle_order_flow(session, user, intent_text)
             order_hint_text = None
             if order_plan:
                 order_hint_text = _plan_to_text(order_plan)
@@ -645,10 +684,10 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     )
                     return
 
-            tokens = tokenize_query(normalized.text)
-            query_tags = infer_tags(normalized.text)
-            wants_products = wants_product_list(normalized.text)
-            needs_details = needs_product_details(lowered)
+            tokens = tokenize_query(query_text)
+            query_tags = infer_tags(query_text)
+            wants_products = wants_product_list(query_text)
+            needs_details = needs_product_details(query_text)
             store_intent = (
                 is_greeting(lowered)
                 or wants_website(lowered)
@@ -657,7 +696,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 or wants_phone(lowered)
                 or wants_trust(lowered)
             )
-            product_intent = wants_product_intent(lowered)
+            product_intent = wants_product_intent(query_text)
             if (
                 not store_intent
                 and (
@@ -669,7 +708,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             ):
                 product_intent = True
 
-            should_match_products = bool(normalized.text) and (
+            should_match_products = bool(query_text) and (
                 product_intent
                 or wants_products
                 or needs_details
@@ -684,7 +723,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             if should_match_products:
                 matches_for_context = await match_products_with_scores(
                     session,
-                    normalized.text,
+                    query_text,
                     limit=max(
                         settings.LLM_PRODUCT_CONTEXT_LIMIT,
                         settings.PRODUCT_MATCH_LIMIT,
@@ -693,17 +732,13 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             matched_products_for_llm = [match.product for match in matches_for_context]
             matched_products = matched_products_for_llm[: settings.PRODUCT_MATCH_LIMIT]
 
-            is_plain_list_request = (
-                wants_products
-                and len(tokens) <= 1
-                and not (
-                    query_tags.categories
-                    or query_tags.genders
-                    or query_tags.materials
-                    or query_tags.styles
-                    or query_tags.colors
-                    or query_tags.sizes
-                )
+            is_plain_list_request = wants_products and not (
+                query_tags.categories
+                or query_tags.genders
+                or query_tags.materials
+                or query_tags.styles
+                or query_tags.colors
+                or query_tags.sizes
             )
             if wants_products and not matched_products_for_llm and is_plain_list_request:
                 result = await session.execute(
@@ -736,6 +771,19 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         confidence_ok = top_match.score >= required_score
                     else:
                         confidence_ok = top_match.score >= 2
+                if (
+                    not tokens
+                    and matches_for_context
+                    and (
+                        query_tags.categories
+                        or query_tags.genders
+                        or query_tags.materials
+                        or query_tags.styles
+                        or query_tags.colors
+                        or query_tags.sizes
+                    )
+                ):
+                    confidence_ok = True
                 low_confidence = not confidence_ok
 
             required_fields: list[str] = []
@@ -743,10 +791,17 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             required_question_text: str | None = None
             if settings.LLM_REQUIRE_FIELDS_ON_LOW_CONF and low_confidence:
                 required_fields, required_known = _missing_required_fields(query_tags, prefs)
-                required_question_text = _format_required_question(required_fields, required_known)
+                if required_fields:
+                    required_question_text = _format_required_question(required_fields, required_known)
+            low_confidence_block = low_confidence and bool(required_fields)
+            confidence_for_cards = confidence_ok or not low_confidence_block
 
             if not llm_first_all:
-                if matched_products and (product_intent or needs_details or wants_products) and low_confidence:
+                if (
+                    matched_products
+                    and (product_intent or needs_details or wants_products)
+                    and low_confidence_block
+                ):
                     await send_and_store(
                         session,
                         conversation.id,
@@ -763,8 +818,8 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     )
                     return
 
-                if matched_products and not store_intent and (confidence_ok or is_plain_list_request):
-                    product_plan = build_product_plan(normalized.text, matched_products)
+                if matched_products and not store_intent and (confidence_for_cards or is_plain_list_request):
+                    product_plan = build_product_plan(query_text, matched_products)
                     if product_plan:
                         await send_plan_and_store(
                             session,
@@ -790,7 +845,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     )
                     return
 
-                if normalized.text and _is_low_signal(normalized.text):
+                if (intent_text or analysis_text) and _is_low_signal(intent_text or analysis_text):
                     if not (
                         is_greeting(lowered)
                         or wants_products
@@ -812,7 +867,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
 
                 rule_plan = build_rule_based_plan(
                     normalized.message_type,
-                    normalized.text,
+                    intent_text,
                     is_first_message,
                 )
                 if rule_plan:
@@ -849,13 +904,35 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             )
             response_log_summary = build_response_log_summary(response_logs)
             system_notes: list[str] = []
+            if analysis_text:
+                detail_lines = [analysis_text]
+                if analysis_payload:
+                    attrs = analysis_payload.get("attributes") or {}
+                    if isinstance(attrs, dict):
+                        attr_bits = [
+                            f"{key}:{value}"
+                            for key, value in attrs.items()
+                            if isinstance(value, str) and value.strip()
+                        ]
+                        if attr_bits:
+                            detail_lines.append("مشخصات: " + "، ".join(attr_bits))
+                    tags = analysis_payload.get("tags") or {}
+                    if isinstance(tags, dict):
+                        tag_bits = []
+                        for key in ("categories", "genders", "styles", "materials", "colors", "sizes"):
+                            values = tags.get(key)
+                            if isinstance(values, list) and values:
+                                tag_bits.append(f"{key}={', '.join(str(v) for v in values)}")
+                        if tag_bits:
+                            detail_lines.append("برچسب‌ها: " + " | ".join(tag_bits))
+                system_notes.append("[IMAGE_ANALYSIS]\n" + "\n".join(detail_lines))
             if order_hint_text:
                 system_notes.append(
                     "[ORDER_FLOW]\n"
                     f"کاربر در جریان ثبت سفارش است. لطفاً همین پیام را ارسال کن:\n{order_hint_text}\n"
                     "تا زمانی که این مرحله کامل نشده، پیشنهاد محصول نده."
                 )
-            if low_confidence and required_question_text:
+            if low_confidence_block and required_question_text:
                 system_notes.append(
                     "[NEED_DETAILS]\n"
                     f"اعتماد پایین است. قبل از پیشنهاد محصول این سؤال را بپرس:\n{required_question_text}\n"
@@ -863,7 +940,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 )
             allow_product_cards = bool(
                 matched_products
-                and not low_confidence
+                and not low_confidence_block
                 and not order_hint_text
                 and (product_intent or wants_products or needs_details)
             )
@@ -947,9 +1024,9 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
 
             show_products = False
             auto_show_products = allow_product_cards
-            if llm_first_all and allow_product_cards:
+            if allow_product_cards:
                 show_products, reply_text = _split_show_products(reply_text)
-                if auto_show_products and not show_products:
+                if llm_first_all and auto_show_products and not show_products:
                     show_products = True
 
             if order_hint_text:
@@ -961,7 +1038,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
 
             product_plan = None
             if show_products and matched_products:
-                product_plan = build_product_plan(normalized.text, matched_products)
+                product_plan = build_product_plan(query_text, matched_products)
 
             if show_products and not reply_text:
                 reply_text = "چند پیشنهاد مرتبط برات آماده کردم:"

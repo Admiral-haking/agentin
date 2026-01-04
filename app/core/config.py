@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     LOG_LEVEL: str = "INFO"
 
     DATABASE_URL: str
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 10
+    DB_POOL_TIMEOUT: int = 30
+    DB_POOL_RECYCLE: int = 1800
 
     DIRECTAM_BASE_URL: str = Field(
         validation_alias=AliasChoices("DIRECTAM_BASE_URL", "SERVICE_BASE_URL")
@@ -42,6 +46,13 @@ class Settings(BaseSettings):
     DEEPSEEK_API_KEY: str | None = None
     DEEPSEEK_BASE_URL: str = "https://api.deepseek.com/v1"
     DEEPSEEK_MODEL: str = "deepseek-chat"
+
+    VISION_ENABLED: bool = False
+    VISION_PROVIDER: str = "openai"
+    VISION_MODEL: str = "gpt-4o-mini"
+    VISION_TIMEOUT_SEC: float = 12.0
+    VISION_MAX_TOKENS: int = 300
+    VISION_TEMPERATURE: float = 0.1
 
     LLM_MODE: str = "hybrid"
     DEFAULT_LANGUAGE: str = "fa"
