@@ -54,7 +54,6 @@ from app.services.llm_clients import LLMError, generate_reply
 from app.services.llm_router import choose_provider
 from app.services.order_flow import handle_order_flow
 from app.services.product_matcher import (
-    match_products,
     match_products_with_scores,
     tokenize_query,
 )
@@ -73,6 +72,130 @@ from app.services.user_profile import extract_preferences
 from app.utils.time import parse_timestamp, utc_now
 
 logger = structlog.get_logger(__name__)
+SHOW_PRODUCTS_TOKEN = "[SHOW_PRODUCTS]"
+REQUIRED_FIELD_LABELS = {
+    "gender": "جنسیت (آقایون/خانم‌ها/بچگانه)",
+    "size": "سایز",
+    "style": "سبک (رسمی/اسپرت)",
+    "budget": "بازه قیمت",
+}
+
+
+def _plan_to_text(plan: OutboundPlan) -> str:
+    if plan.text:
+        return plan.text
+    if plan.type == "generic_template":
+        lines = []
+        for element in plan.elements:
+            line = element.title
+            if element.subtitle:
+                line = f"{line} - {element.subtitle}"
+            lines.append(line)
+        if lines:
+            return "\n".join(lines)
+    return fallback_for_message_type("text")
+
+
+def _split_show_products(text: str) -> tuple[bool, str]:
+    if not text:
+        return False, text
+    lines = [line.rstrip() for line in text.splitlines()]
+    show_products = any(line.strip() == SHOW_PRODUCTS_TOKEN for line in lines)
+    if not show_products:
+        return False, text.strip()
+    cleaned = "\n".join(
+        line for line in lines if line.strip() != SHOW_PRODUCTS_TOKEN
+    ).strip()
+    return True, cleaned
+
+
+def _missing_required_fields(
+    query_tags: Any,
+    prefs: dict[str, Any] | None,
+) -> tuple[list[str], dict[str, str]]:
+    missing: list[str] = []
+    known: dict[str, str] = {}
+    prefs = prefs or {}
+
+    gender = None
+    if query_tags.genders:
+        gender = "، ".join(query_tags.genders)
+    elif isinstance(prefs.get("gender"), str):
+        gender = prefs["gender"]
+    if gender:
+        known["gender"] = gender
+    else:
+        missing.append("gender")
+
+    size = None
+    if query_tags.sizes:
+        size = "، ".join(query_tags.sizes)
+    else:
+        pref_sizes = prefs.get("sizes")
+        if isinstance(pref_sizes, list) and pref_sizes:
+            size = "، ".join(str(item) for item in pref_sizes)
+    if size:
+        known["size"] = size
+    else:
+        missing.append("size")
+
+    style = None
+    if query_tags.styles:
+        style = "، ".join(query_tags.styles)
+    if style:
+        known["style"] = style
+    else:
+        missing.append("style")
+
+    budget_min = prefs.get("budget_min") if isinstance(prefs.get("budget_min"), int) else None
+    budget_max = prefs.get("budget_max") if isinstance(prefs.get("budget_max"), int) else None
+    if budget_min is not None or budget_max is not None:
+        if budget_min is not None and budget_max is not None:
+            known["budget"] = f"{budget_min:,} تا {budget_max:,} تومان"
+        elif budget_min is not None:
+            known["budget"] = f"از {budget_min:,} تومان به بالا"
+        else:
+            known["budget"] = f"تا {budget_max:,} تومان"
+    else:
+        missing.append("budget")
+
+    return missing, known
+
+
+def _format_required_question(missing: list[str], known: dict[str, str]) -> str:
+    known_parts = []
+    for key, label in (("gender", "جنسیت"), ("size", "سایز"), ("style", "سبک"), ("budget", "بازه قیمت")):
+        if key in known:
+            known_parts.append(f"{label}: {known[key]}")
+    prefix = ""
+    if known_parts:
+        prefix = f"{' | '.join(known_parts)}. "
+    if not missing:
+        return prefix + "برای معرفی دقیق‌تر، لطفاً اسم دقیق مدل یا عکسش رو بفرستید."
+    labels = [REQUIRED_FIELD_LABELS[field] for field in missing]
+    if len(labels) == 1:
+        ask = labels[0]
+    elif len(labels) == 2:
+        ask = " و ".join(labels)
+    else:
+        ask = "، ".join(labels[:-1]) + " و " + labels[-1]
+    return prefix + f"برای معرفی دقیق‌تر، لطفاً {ask} رو بگید."
+
+
+def _contains_required_fields(text: str, missing: list[str]) -> bool:
+    if not text:
+        return False
+    if not missing:
+        lowered = text.lower()
+        return any(keyword in lowered for keyword in ["مدل", "عکس", "تصویر"])
+    lowered = text.lower()
+    checks = {
+        "gender": ["جنسیت", "آقا", "خانم", "مردانه", "زنانه", "بچگانه"],
+        "size": ["سایز", "اندازه"],
+        "style": ["رسمی", "اسپرت", "روزمره", "کلاسیک"],
+        "budget": ["قیمت", "تومان", "بازه", "بودجه"],
+    }
+    return all(any(keyword in lowered for keyword in checks[field]) for field in missing)
 
 
 def _is_low_signal(text: str | None) -> bool:
@@ -353,6 +476,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     merged.update(extra)
                 return merged
 
+            llm_first_all = settings.LLM_FIRST_ALL
             lowered = (normalized.text or "").strip().lower()
             if normalized.text:
                 behavior_match, behavior_summary, behavior_recent = await analyze_user_behavior(
@@ -413,63 +537,64 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     or wants_phone(lowered)
                     or wants_trust(lowered)
                 )
-                if is_thanks(lowered):
-                    await send_and_store(
-                        session,
-                        conversation.id,
-                        normalized.sender_id,
-                        build_thanks_response(),
-                        meta=_merge_meta({"source": "guardrails", "intent": "thanks"}),
-                    )
-                    return
-                if is_decline(lowered):
-                    await send_and_store(
-                        session,
-                        conversation.id,
-                        normalized.sender_id,
-                        build_decline_response(),
-                        meta=_merge_meta({"source": "guardrails", "intent": "decline"}),
-                    )
-                    return
-                if is_goodbye(lowered):
-                    await send_and_store(
-                        session,
-                        conversation.id,
-                        normalized.sender_id,
-                        build_goodbye_response(),
-                        meta=_merge_meta({"source": "guardrails", "intent": "goodbye"}),
-                    )
-                    return
-                if store_intent:
-                    store_topic = None
-                    if wants_hours(lowered):
-                        store_topic = "hours"
-                    elif wants_address(lowered):
-                        store_topic = "address"
-                    elif wants_phone(lowered):
-                        store_topic = "phone"
-                    elif wants_website(lowered):
-                        store_topic = "website"
-                    elif wants_trust(lowered):
-                        store_topic = "trust"
-                    rule_plan = build_rule_based_plan(
-                        normalized.message_type,
-                        normalized.text,
-                        is_first_message,
-                    )
-                    if rule_plan:
-                        await send_plan_and_store(
+                if not llm_first_all:
+                    if is_thanks(lowered):
+                        await send_and_store(
                             session,
                             conversation.id,
                             normalized.sender_id,
-                            rule_plan,
-                            meta=_merge_meta({
-                                "source": "guardrails",
-                                "intent": "store_info",
-                                "store_topic": store_topic,
-                            }),
+                            build_thanks_response(),
+                            meta=_merge_meta({"source": "guardrails", "intent": "thanks"}),
                         )
                         return
+                    if is_decline(lowered):
+                        await send_and_store(
+                            session,
+                            conversation.id,
+                            normalized.sender_id,
+                            build_decline_response(),
+                            meta=_merge_meta({"source": "guardrails", "intent": "decline"}),
+                        )
+                        return
+                    if is_goodbye(lowered):
+                        await send_and_store(
+                            session,
+                            conversation.id,
+                            normalized.sender_id,
+                            build_goodbye_response(),
+                            meta=_merge_meta({"source": "guardrails", "intent": "goodbye"}),
+                        )
+                        return
+                    if store_intent:
+                        store_topic = None
+                        if wants_hours(lowered):
+                            store_topic = "hours"
+                        elif wants_address(lowered):
+                            store_topic = "address"
+                        elif wants_phone(lowered):
+                            store_topic = "phone"
+                        elif wants_website(lowered):
+                            store_topic = "website"
+                        elif wants_trust(lowered):
+                            store_topic = "trust"
+                        rule_plan = build_rule_based_plan(
+                            normalized.message_type,
+                            normalized.text,
+                            is_first_message,
+                        )
+                        if rule_plan:
+                            await send_plan_and_store(
+                                session,
+                                conversation.id,
+                                normalized.sender_id,
+                                rule_plan,
+                                meta=_merge_meta({
+                                    "source": "guardrails",
+                                    "intent": "store_info",
+                                    "store_topic": store_topic,
+                                }),
+                            )
+                            return
 
             if behavior_context is None and isinstance(user.profile_json, dict):
                 behavior_context = build_behavior_context(user.profile_json.get("behavior"))
@@ -499,24 +624,21 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         await session.commit()
 
             order_plan = await handle_order_flow(session, user, normalized.text)
+            order_hint_text = None
             if order_plan:
-                await send_plan_and_store(
-                    session,
-                    conversation.id,
-                    normalized.sender_id,
-                    order_plan,
-                    meta=_merge_meta({"source": "order_flow", "intent": "order_flow"}),
-                )
-                return
+                order_hint_text = _plan_to_text(order_plan)
+                if not llm_first_all:
+                    await send_plan_and_store(
+                        session,
+                        conversation.id,
+                        normalized.sender_id,
+                        order_plan,
+                        meta=_merge_meta({"source": "order_flow", "intent": "order_flow"}),
+                    )
+                    return
 
             tokens = tokenize_query(normalized.text)
             query_tags = infer_tags(normalized.text)
-            matches = await match_products_with_scores(
-                session,
-                normalized.text,
-                limit=settings.PRODUCT_MATCH_LIMIT,
-            )
-            matched_products = [match.product for match in matches]
             wants_products = wants_product_list(normalized.text)
             needs_details = needs_product_details(lowered)
             store_intent = (
@@ -538,6 +660,31 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 )
             ):
                 product_intent = True
+
+            should_match_products = bool(normalized.text) and (
+                product_intent
+                or wants_products
+                or needs_details
+                or query_tags.categories
+                or query_tags.genders
+                or query_tags.materials
+                or query_tags.styles
+                or query_tags.colors
+                or query_tags.sizes
+            )
+            matches_for_context = []
+            if should_match_products:
+                matches_for_context = await match_products_with_scores(
+                    session,
+                    normalized.text,
+                    limit=max(
+                        settings.LLM_PRODUCT_CONTEXT_LIMIT,
+                        settings.PRODUCT_MATCH_LIMIT,
+                    ),
+                )
+            matched_products_for_llm = [match.product for match in matches_for_context]
+            matched_products = matched_products_for_llm[: settings.PRODUCT_MATCH_LIMIT]
+
             is_plain_list_request = (
                 wants_products
                 and len(tokens) <= 1
@@ -550,133 +697,179 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     or query_tags.sizes
                 )
             )
-            if wants_products and not matched_products and is_plain_list_request:
+            if wants_products and not matched_products_for_llm and is_plain_list_request:
                 result = await session.execute(
                     select(Product)
                     .order_by(Product.updated_at.desc())
-                    .limit(settings.PRODUCT_MATCH_LIMIT)
+                    .limit(settings.LLM_PRODUCT_CONTEXT_LIMIT)
                 )
-                matched_products = list(result.scalars().all())
+                matched_products_for_llm = list(result.scalars().all())
+                matched_products = matched_products_for_llm[: settings.PRODUCT_MATCH_LIMIT]
 
             prefs = None
             if isinstance(user.profile_json, dict):
                 prefs = user.profile_json.get("prefs")
+            matched_products_for_llm = _rank_products_by_prefs(matched_products_for_llm, prefs)
             matched_products = _rank_products_by_prefs(matched_products, prefs)
             matched_product_ids = [product.id for product in matched_products]
             matched_product_slugs = [product.slug for product in matched_products if product.slug]
 
             confidence_ok = True
-            if matched_products and tokens:
-                if len(tokens) >= 3 and matches:
-                    confidence_ok = matches[0].score >= len(tokens)
-            if matched_products and (product_intent or needs_details or wants_products) and not confidence_ok:
-                await send_and_store(
-                    session,
-                    conversation.id,
-                    normalized.sender_id,
-                    "برای اینکه اشتباه معرفی نکنم، لطفاً جنسیت، سایز و سبک (رسمی/اسپرت) رو بگید؛ اگر مدل خاصی مدنظرتونه اسم یا عکسش رو بفرستید.",
-                    meta=_merge_meta({
-                        "source": "product_match",
-                        "intent": "need_details",
-                        "product_ids": matched_product_ids,
-                        "product_slugs": matched_product_slugs,
-                        "confidence_ok": False,
-                    }),
-                )
-                return
+            low_confidence = False
+            if product_intent or needs_details or wants_products:
+                top_match = matches_for_context[0] if matches_for_context else None
+                if not top_match:
+                    confidence_ok = False
+                else:
+                    if tokens:
+                        required_score = max(2, len(tokens))
+                        if len(tokens) >= 3:
+                            required_score = max(3, len(tokens))
+                        confidence_ok = top_match.score >= required_score
+                    else:
+                        confidence_ok = top_match.score >= 2
+                low_confidence = not confidence_ok
 
-            if matched_products and not store_intent and (confidence_ok or is_plain_list_request):
-                product_plan = build_product_plan(normalized.text, matched_products)
-                if product_plan:
+            required_fields: list[str] = []
+            required_known: dict[str, str] = {}
+            required_question_text: str | None = None
+            if settings.LLM_REQUIRE_FIELDS_ON_LOW_CONF and low_confidence:
+                required_fields, required_known = _missing_required_fields(query_tags, prefs)
+                required_question_text = _format_required_question(required_fields, required_known)
+
+            if not llm_first_all:
+                if matched_products and (product_intent or needs_details or wants_products) and low_confidence:
+                    await send_and_store(
+                        session,
+                        conversation.id,
+                        normalized.sender_id,
+                        required_question_text
+                        or "برای معرفی دقیق‌تر، لطفاً جنسیت، سایز، سبک (رسمی/اسپرت) و بازه قیمت رو بگید.",
+                        meta=_merge_meta({
+                            "source": "product_match",
+                            "intent": "need_details",
+                            "product_ids": matched_product_ids,
+                            "product_slugs": matched_product_slugs,
+                            "confidence_ok": False,
+                        }),
+                    )
+                    return
+
+                if matched_products and not store_intent and (confidence_ok or is_plain_list_request):
+                    product_plan = build_product_plan(normalized.text, matched_products)
+                    if product_plan:
+                        await send_plan_and_store(
+                            session,
+                            conversation.id,
+                            normalized.sender_id,
+                            product_plan,
+                            meta=_merge_meta({
+                                "source": "product_match",
+                                "intent": "product_suggest",
+                                "product_ids": matched_product_ids,
+                                "product_slugs": matched_product_slugs,
+                                "confidence_ok": confidence_ok,
+                            }),
+                        )
+                        return
+                if product_intent and not matched_products:
+                    await send_and_store(
+                        session,
+                        conversation.id,
+                        normalized.sender_id,
+                        "برای معرفی دقیق‌تر، لطفاً جنسیت، سایز، سبک (رسمی/اسپرت) و بازه قیمت رو بگید؛ اگر مدل خاصی دارید اسم یا عکسش رو بفرستید.",
+                        meta=_merge_meta({"source": "product_match", "intent": "no_match"}),
+                    )
+                    return
+
+                if normalized.text and _is_low_signal(normalized.text):
+                    if not (
+                        is_greeting(lowered)
+                        or wants_products
+                        or needs_details
+                        or wants_website(lowered)
+                        or wants_address(lowered)
+                        or wants_hours(lowered)
+                        or wants_phone(lowered)
+                        or wants_trust(lowered)
+                    ):
+                        await send_and_store(
+                            session,
+                            conversation.id,
+                            normalized.sender_id,
+                            fallback_for_message_type("text"),
+                            meta=_merge_meta({"source": "guardrails", "intent": "low_signal"}),
+                        )
+                        return
+
+                rule_plan = build_rule_based_plan(
+                    normalized.message_type,
+                    normalized.text,
+                    is_first_message,
+                )
+                if rule_plan:
                     await send_plan_and_store(
                         session,
                         conversation.id,
                         normalized.sender_id,
-                        product_plan,
-                        meta=_merge_meta({
-                            "source": "product_match",
-                            "intent": "product_suggest",
-                            "product_ids": matched_product_ids,
-                            "product_slugs": matched_product_slugs,
-                            "confidence_ok": confidence_ok,
-                        }),
-                    )
-                    return
-            if product_intent and not matched_products:
-                await send_and_store(
-                    session,
-                    conversation.id,
-                    normalized.sender_id,
-                    "برای معرفی دقیق‌تر، لطفاً جنسیت، سایز و سبک (رسمی/اسپرت) رو بگید؛ اگر مدل خاصی دارید اسم یا عکسش رو بفرستید.",
-                    meta=_merge_meta({"source": "product_match", "intent": "no_match"}),
-                )
-                return
-
-            if normalized.text and _is_low_signal(normalized.text):
-                if not (
-                    is_greeting(lowered)
-                    or wants_products
-                    or needs_details
-                    or wants_website(lowered)
-                    or wants_address(lowered)
-                    or wants_hours(lowered)
-                    or wants_phone(lowered)
-                    or wants_trust(lowered)
-                ):
-                    await send_and_store(
-                        session,
-                        conversation.id,
-                        normalized.sender_id,
-                        fallback_for_message_type("text"),
-                        meta=_merge_meta({"source": "guardrails", "intent": "low_signal"}),
+                        rule_plan,
+                        meta=_merge_meta({"source": "guardrails", "intent": "rule_based"}),
                     )
                     return
 
-            rule_plan = build_rule_based_plan(
-                normalized.message_type,
-                normalized.text,
-                is_first_message,
-            )
-            if rule_plan:
-                await send_plan_and_store(
-                    session,
-                    conversation.id,
-                    normalized.sender_id,
-                    rule_plan,
-                    meta=_merge_meta({"source": "guardrails", "intent": "rule_based"}),
-                )
-                return
-
-            faqs = await get_verified_faqs(session)
-            if normalized.text and faqs:
-                faq_answer = match_faq(normalized.text, faqs)
-                if faq_answer:
-                    await send_and_store(
-                        session,
-                        conversation.id,
-                        normalized.sender_id,
-                        faq_answer,
-                        meta=_merge_meta({"source": "faq", "intent": "faq_match"}),
-                    )
-                    return
+                faqs = await get_verified_faqs(session)
+                if normalized.text and faqs:
+                    faq_answer = match_faq(normalized.text, faqs)
+                    if faq_answer:
+                        await send_and_store(
+                            session,
+                            conversation.id,
+                            normalized.sender_id,
+                            faq_answer,
+                            meta=_merge_meta({"source": "faq", "intent": "faq_match"}),
+                        )
+                        return
+            else:
+                faqs = await get_verified_faqs(session)
 
             campaigns = await get_active_campaigns(session)
-            matched_products_for_llm = matched_products if confidence_ok else []
+            llm_products = matched_products_for_llm if should_match_products else []
             response_logs = await get_recent_response_logs(
                 session,
                 conversation.id,
                 settings.RESPONSE_LOG_CONTEXT_LIMIT,
             )
             response_log_summary = build_response_log_summary(response_logs)
+            system_notes: list[str] = []
+            if order_hint_text:
+                system_notes.append(
+                    "[ORDER_FLOW]\n"
+                    f"کاربر در جریان ثبت سفارش است. لطفاً همین پیام را ارسال کن:\n{order_hint_text}\n"
+                    "تا زمانی که این مرحله کامل نشده، پیشنهاد محصول نده."
+                )
+            if low_confidence and required_question_text:
+                system_notes.append(
+                    "[NEED_DETAILS]\n"
+                    f"اعتماد پایین است. قبل از پیشنهاد محصول این سؤال را بپرس:\n{required_question_text}\n"
+                    "تا جزئیات کامل نشده، محصول پیشنهاد نده."
+                )
+            allow_product_cards = bool(
+                matched_products
+                and not low_confidence
+                and not order_hint_text
+                and (product_intent or wants_products or needs_details)
+            )
             llm_messages = build_llm_messages(
                 history,
                 bot_settings,
                 normalized,
                 user,
-                matched_products_for_llm,
+                llm_products,
                 catalog_summary=catalog_summary,
                 response_log_summary=response_log_summary,
                 behavior_context=behavior_context,
+                system_notes=system_notes,
+                allow_product_cards=allow_product_cards,
             )
             llm_messages = inject_campaigns_and_faqs(llm_messages, campaigns, faqs)
 
@@ -744,22 +937,60 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     else fallback_llm_text()
                 )
 
-            await send_and_store(
-                session,
-                conversation.id,
-                normalized.sender_id,
-                reply_text,
-                meta=_merge_meta({
-                    "source": "llm",
-                    "intent": "llm",
-                    "provider": provider_used,
-                    "product_context_count": len(matched_products_for_llm),
-                    "product_ids": matched_product_ids,
-                    "product_slugs": matched_product_slugs,
-                    "catalog_used": bool(catalog_summary),
-                    "response_logs_used": bool(response_log_summary),
-                }),
-            )
+            show_products = False
+            if llm_first_all and allow_product_cards:
+                show_products, reply_text = _split_show_products(reply_text)
+
+            if order_hint_text:
+                reply_text = order_hint_text
+                show_products = False
+            elif required_question_text and not _contains_required_fields(reply_text, required_fields):
+                reply_text = required_question_text
+                show_products = False
+
+            product_plan = None
+            if show_products and matched_products:
+                product_plan = build_product_plan(normalized.text, matched_products)
+
+            if reply_text:
+                await send_and_store(
+                    session,
+                    conversation.id,
+                    normalized.sender_id,
+                    reply_text,
+                    meta=_merge_meta({
+                        "source": "llm",
+                        "intent": "llm",
+                        "provider": provider_used,
+                        "product_context_count": len(llm_products),
+                        "product_ids": matched_product_ids,
+                        "product_slugs": matched_product_slugs,
+                        "catalog_used": bool(catalog_summary),
+                        "response_logs_used": bool(response_log_summary),
+                        "llm_first": llm_first_all,
+                        "confidence_ok": confidence_ok,
+                        "low_confidence": low_confidence,
+                        "required_fields": required_fields,
+                        "order_flow": bool(order_hint_text),
+                        "show_products_token": show_products,
+                    }),
+                )
+
+            if product_plan:
+                await send_plan_and_store(
+                    session,
+                    conversation.id,
+                    normalized.sender_id,
+                    product_plan,
+                    meta=_merge_meta({
+                        "source": "product_match",
+                        "intent": "product_suggest",
+                        "product_ids": matched_product_ids,
+                        "product_slugs": matched_product_slugs,
+                        "confidence_ok": confidence_ok,
+                        "llm_first": llm_first_all,
+                    }),
+                )
         except Exception as exc:
             logger.error("errors", stage="processor", error=str(exc))
             await session.rollback()
@@ -998,6 +1229,8 @@ def build_llm_messages(
     catalog_summary: str | None = None,
     response_log_summary: str | None = None,
     behavior_context: str | None = None,
+    system_notes: list[str] | None = None,
+    allow_product_cards: bool = False,
 ) -> list[dict[str, str]]:
     history = _trim_history_for_llm(history, settings.LLM_MAX_USER_TURNS)
     base_prompt = bot_settings.system_prompt if bot_settings else load_prompt("system.txt")
@@ -1007,6 +1240,8 @@ def build_llm_messages(
         prompt_parts.append(catalog_summary)
     if behavior_context:
         prompt_parts.append(behavior_context)
+    if system_notes:
+        prompt_parts.extend(note for note in system_notes if note)
 
     if message.text:
         lowered = message.text.lower()
@@ -1107,6 +1342,11 @@ def build_llm_messages(
             "- فقط از قیمت‌های بالا استفاده کن و قیمت جدید نساز.\n"
             "- اگر قیمت نامشخص بود، همین را اعلام کن و از کاربر جزئیات بپرس."
         )
+        if allow_product_cards:
+            product_context += (
+                "\n- اگر می‌خواهی کارت محصول نمایش داده شود، دقیقاً یک خط جدا شامل "
+                f"{SHOW_PRODUCTS_TOKEN} بنویس."
+            )
         messages.append({"role": "system", "content": product_context})
 
     for item in history:
