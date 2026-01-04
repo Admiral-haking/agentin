@@ -6,6 +6,14 @@ const DEFAULT_API_URL = import.meta.env.DEV
   : 'https://api.teamcore.ir';
 const API_URL = import.meta.env.VITE_API_URL || DEFAULT_API_URL;
 
+const parseResponse = async (response: Response) => {
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(data?.detail || 'Request failed');
+  }
+  return data;
+};
+
 const buildQuery = (params: any) => {
   const { page, perPage } = params.pagination;
   const { field, order } = params.sort;
@@ -25,7 +33,7 @@ const dataProvider: DataProvider = {
   getList: async (resource, params) => {
     if (resource === 'settings') {
       const response = await fetchWithAuth(`${API_URL}/admin/settings`);
-      const data = await response.json();
+      const data = await parseResponse(response);
       return { data: [data], total: 1 };
     }
     if (resource === 'product-sync-runs') {
@@ -33,24 +41,24 @@ const dataProvider: DataProvider = {
       const response = await fetchWithAuth(
         `${API_URL}/admin/products/sync-runs?${query}`
       );
-      const data = await response.json();
+      const data = await parseResponse(response);
       return { data: data.data, total: data.total };
     }
     const query = buildQuery(params);
     const response = await fetchWithAuth(`${API_URL}/admin/${resource}?${query}`);
-    const data = await response.json();
+    const data = await parseResponse(response);
     return { data: data.data, total: data.total };
   },
   getOne: async (resource, params) => {
     if (resource === 'settings') {
       const response = await fetchWithAuth(`${API_URL}/admin/settings`);
-      const data = await response.json();
+      const data = await parseResponse(response);
       return { data };
     }
     const response = await fetchWithAuth(
       `${API_URL}/admin/${resource}/${params.id}`
     );
-    const data = await response.json();
+    const data = await parseResponse(response);
     return { data };
   },
   getMany: async (resource, params) => {
@@ -61,14 +69,14 @@ const dataProvider: DataProvider = {
       filter,
     });
     const response = await fetchWithAuth(`${API_URL}/admin/${resource}?${query}`);
-    const data = await response.json();
+    const data = await parseResponse(response);
     return { data: data.data };
   },
   getManyReference: async (resource, params) => {
     const filter = { ...params.filter, [params.target]: params.id };
     const query = buildQuery({ ...params, filter });
     const response = await fetchWithAuth(`${API_URL}/admin/${resource}?${query}`);
-    const data = await response.json();
+    const data = await parseResponse(response);
     return { data: data.data, total: data.total };
   },
   update: async (resource, params) => {
@@ -78,7 +86,7 @@ const dataProvider: DataProvider = {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(params.data),
       });
-      const data = await response.json();
+      const data = await parseResponse(response);
       return { data };
     }
     const response = await fetchWithAuth(`${API_URL}/admin/${resource}/${params.id}`, {
@@ -86,7 +94,7 @@ const dataProvider: DataProvider = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params.data),
     });
-    const data = await response.json();
+    const data = await parseResponse(response);
     return { data };
   },
   create: async (resource, params) => {
@@ -95,14 +103,14 @@ const dataProvider: DataProvider = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params.data),
     });
-    const data = await response.json();
+    const data = await parseResponse(response);
     return { data };
   },
   delete: async (resource, params) => {
     const response = await fetchWithAuth(`${API_URL}/admin/${resource}/${params.id}`, {
       method: 'DELETE',
     });
-    const data = await response.json();
+    const data = await parseResponse(response);
     return { data: { id: params.id, ...data } };
   },
   updateMany: async () => ({ data: [] }),

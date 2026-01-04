@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from decimal import Decimal
 from enum import Enum
 from uuid import UUID
 
@@ -15,11 +16,17 @@ def _serialize(value: object) -> object:
         return value.isoformat()
     if isinstance(value, date):
         return value.isoformat()
+    if isinstance(value, Decimal):
+        return float(value)
     if isinstance(value, Enum):
         return value.value
     if isinstance(value, UUID):
         return str(value)
     if isinstance(value, list):
+        return [_serialize(item) for item in value]
+    if isinstance(value, tuple):
+        return [_serialize(item) for item in value]
+    if isinstance(value, set):
         return [_serialize(item) for item in value]
     if isinstance(value, dict):
         return {key: _serialize(val) for key, val in value.items()}
@@ -29,6 +36,10 @@ def _serialize(value: object) -> object:
 def _to_dict(value: object | None) -> dict | None:
     if value is None:
         return None
+    if isinstance(value, dict):
+        return _serialize(value)
+    if isinstance(value, list):
+        return _serialize(value)
     if hasattr(value, "model_dump"):
         return _serialize(value.model_dump(mode="json"))
     try:
