@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import re
 import time
 from datetime import datetime
 from typing import Any
+from urllib.parse import urlparse
 
 import structlog
 from sqlalchemy import Integer, cast, select
@@ -46,6 +48,7 @@ from app.services.guardrails import (
     wants_phone,
     wants_trust,
     wants_website,
+    wants_contact,
 )
 from app.services.instagram_user_client import (
     InstagramUserClient,
@@ -82,6 +85,31 @@ REQUIRED_FIELD_LABELS = {
     "style": "سبک (رسمی/اسپرت)",
     "budget": "بازه قیمت",
 }
+PRODUCT_URL_HOSTS = {"ghlbedovom.com"}
+PRODUCT_URL_PREFIX = "/product/"
+PRODUCT_URL_RE = re.compile(r"https?://[^\s)]+")
+
+
+def _extract_product_slug(text: str | None) -> str | None:
+    if not text:
+        return None
+    for match in PRODUCT_URL_RE.findall(text):
+        cleaned = match.rstrip(").,")
+        parsed = urlparse(cleaned)
+        if parsed.netloc not in PRODUCT_URL_HOSTS:
+            continue
+        if PRODUCT_URL_PREFIX not in parsed.path:
+            continue
+        parts = [part for part in parsed.path.split("/") if part]
+        if "product" not in parts:
+            continue
+        idx = parts.index("product")
+        if idx + 1 >= len(parts):
+            continue
+        slug = parts[idx + 1].strip()
+        if slug:
+            return slug
+    return None
 
 
 def _plan_to_text(plan: OutboundPlan) -> str:
@@ -647,6 +675,86 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             if behavior_context is None and isinstance(user.profile_json, dict):
                 behavior_context = build_behavior_context(user.profile_json.get("behavior"))
 
+            store_info_intent = (
+                wants_contact(lowered)
+                or wants_website(lowered)
+                or wants_address(lowered)
+                or wants_hours(lowered)
+                or wants_phone(lowered)
+                or wants_trust(lowered)
+            )
+            if store_info_intent:
+                store_topic = None
+                if wants_contact(lowered):
+                    store_topic = "contact"
+                elif wants_hours(lowered):
+                    store_topic = "hours"
+                elif wants_address(lowered):
+                    store_topic = "address"
+                elif wants_phone(lowered):
+                    store_topic = "phone"
+                elif wants_website(lowered):
+                    store_topic = "website"
+                elif wants_trust(lowered):
+                    store_topic = "trust"
+                rule_plan = build_rule_based_plan(
+                    normalized.message_type,
+                    intent_text,
+                    is_first_message,
+                )
+                if rule_plan:
+                    await send_plan_and_store(
+                        session,
+                        conversation.id,
+                        normalized.sender_id,
+                        rule_plan,
+                        meta=_merge_meta({
+                            "source": "guardrails",
+                            "intent": "store_info",
+                            "store_topic": store_topic,
+                        }),
+                    )
+                    return
+
+            if llm_first_all:
+                token_count = len(intent_text.split()) if intent_text else 0
+                if is_thanks(lowered) and token_count <= 4:
+                    await send_and_store(
+                        session,
+                        conversation.id,
+                        normalized.sender_id,
+                        build_thanks_response(),
+                        meta=_merge_meta({"source": "guardrails", "intent": "thanks"}),
+                    )
+                    return
+                if is_decline(lowered) and token_count <= 6:
+                    await send_and_store(
+                        session,
+                        conversation.id,
+                        normalized.sender_id,
+                        build_decline_response(),
+                        meta=_merge_meta({"source": "guardrails", "intent": "decline"}),
+                    )
+                    return
+                if is_goodbye(lowered) and token_count <= 4:
+                    await send_and_store(
+                        session,
+                        conversation.id,
+                        normalized.sender_id,
+                        build_goodbye_response(),
+                        meta=_merge_meta({"source": "guardrails", "intent": "goodbye"}),
+                    )
+                    return
+                if is_greeting(lowered) and token_count <= 2:
+                    await send_and_store(
+                        session,
+                        conversation.id,
+                        normalized.sender_id,
+                        "سلام! چطور می‌تونم کمکتون کنم؟",
+                        meta=_merge_meta({"source": "guardrails", "intent": "greeting"}),
+                    )
+                    return
+
             if query_text:
                 pref_updates = extract_preferences(query_text)
                 if pref_updates:
@@ -685,6 +793,17 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     )
                     return
 
+            url_slug = _extract_product_slug(intent_text)
+            product_from_url: Product | None = None
+            if url_slug:
+                result = await session.execute(
+                    select(Product).where(
+                        (Product.slug == url_slug)
+                        | Product.page_url.ilike(f"%/product/{url_slug}%")
+                    )
+                )
+                product_from_url = result.scalars().first()
+
             tokens = tokenize_query(query_text)
             query_tags = infer_tags(query_text)
             wants_products = wants_product_list(query_text)
@@ -720,8 +839,10 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 or query_tags.colors
                 or query_tags.sizes
             )
+            if product_from_url:
+                should_match_products = True
             matches_for_context = []
-            if should_match_products:
+            if should_match_products and not product_from_url:
                 matches_for_context = await match_products_with_scores(
                     session,
                     query_text,
@@ -732,6 +853,9 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 )
             matched_products_for_llm = [match.product for match in matches_for_context]
             matched_products = matched_products_for_llm[: settings.PRODUCT_MATCH_LIMIT]
+            if product_from_url:
+                matched_products_for_llm = [product_from_url]
+                matched_products = [product_from_url]
 
             is_plain_list_request = wants_products and not (
                 query_tags.categories
@@ -761,17 +885,20 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             confidence_ok = True
             low_confidence = False
             if product_intent or needs_details or wants_products:
-                top_match = matches_for_context[0] if matches_for_context else None
-                if not top_match:
-                    confidence_ok = False
+                if product_from_url:
+                    confidence_ok = True
                 else:
-                    if tokens:
-                        required_score = max(2, len(tokens))
-                        if len(tokens) >= 3:
-                            required_score = max(3, len(tokens))
-                        confidence_ok = top_match.score >= required_score
+                    top_match = matches_for_context[0] if matches_for_context else None
+                    if not top_match:
+                        confidence_ok = False
                     else:
-                        confidence_ok = top_match.score >= 2
+                        if tokens:
+                            required_score = max(2, len(tokens))
+                            if len(tokens) >= 3:
+                                required_score = max(3, len(tokens))
+                            confidence_ok = top_match.score >= required_score
+                        else:
+                            confidence_ok = top_match.score >= 2
                 if (
                     not tokens
                     and matches_for_context
@@ -1025,10 +1152,13 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
 
             show_products = False
             auto_show_products = allow_product_cards
-            if allow_product_cards:
-                show_products, reply_text = _split_show_products(reply_text)
-                if llm_first_all and auto_show_products and not show_products:
-                    show_products = True
+            token_requested = False
+            if reply_text:
+                token_requested, reply_text = _split_show_products(reply_text)
+            if allow_product_cards and token_requested:
+                show_products = True
+            if allow_product_cards and llm_first_all and auto_show_products and not show_products:
+                show_products = True
 
             if order_hint_text:
                 reply_text = order_hint_text
@@ -1046,6 +1176,11 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
 
             if show_products and not reply_text:
                 reply_text = "چند پیشنهاد مرتبط برات آماده کردم:"
+
+            if not reply_text:
+                reply_text = fallback_llm_text(
+                    bot_settings.fallback_text if bot_settings else None
+                )
 
             if reply_text:
                 await send_and_store(

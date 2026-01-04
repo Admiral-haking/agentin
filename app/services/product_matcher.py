@@ -9,7 +9,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.product import Product
-from app.services.product_taxonomy import expand_query_terms, infer_tags
+from app.services.product_taxonomy import (
+    COLOR_KEYWORDS,
+    GENDER_SYNONYMS,
+    MATERIAL_SYNONYMS,
+    SIZE_KEYWORDS,
+    STYLE_SYNONYMS,
+    expand_query_terms,
+    infer_tags,
+)
 
 _TOKEN_RE = re.compile(r"[\w\u0600-\u06FF]+", re.UNICODE)
 _STOPWORDS = {
@@ -37,6 +45,21 @@ _STOPWORDS = {
     "buy",
     "order",
 }
+_IGNORE_TOKENS = {
+    keyword.lower()
+    for keywords in (
+        *GENDER_SYNONYMS.values(),
+        *STYLE_SYNONYMS.values(),
+        *MATERIAL_SYNONYMS.values(),
+    )
+    for keyword in keywords
+}
+_IGNORE_TOKENS.update({keyword.lower() for keyword in COLOR_KEYWORDS})
+_IGNORE_TOKENS.update({keyword.lower() for keyword in SIZE_KEYWORDS})
+
+
+def _content_tokens(tokens: list[str]) -> list[str]:
+    return [token for token in tokens if token not in _IGNORE_TOKENS]
 
 
 def _tokenize(text: str) -> list[str]:
@@ -134,7 +157,9 @@ async def match_products_with_scores(
     if not text:
         return []
     query_tags = infer_tags(text)
-    tokens = _tokenize(text)
+    raw_tokens = _tokenize(text)
+    content_tokens = _content_tokens(raw_tokens)
+    tokens = content_tokens or raw_tokens
     if not tokens and not (
         query_tags.categories
         or query_tags.genders
@@ -142,6 +167,10 @@ async def match_products_with_scores(
         or query_tags.styles
         or query_tags.colors
         or query_tags.sizes
+    ):
+        return []
+    if not content_tokens and not query_tags.categories and (
+        query_tags.styles or query_tags.genders or query_tags.colors or query_tags.sizes
     ):
         return []
 

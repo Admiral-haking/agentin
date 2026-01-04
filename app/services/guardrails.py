@@ -114,18 +114,6 @@ PRODUCT_INTENT_KEYWORDS = {
     "چی داری",
     "پیشنهاد",
     "چی پیشنهاد",
-    "چه چیزی",
-    "میخوام",
-    "می خوام",
-    "میخواهم",
-    "می خواهم",
-    "می‌خوام",
-    "می‌خواهم",
-    "میگردم",
-    "می‌گردم",
-    "دنبال",
-    "دارید",
-    "دارین",
     "دسته",
     "دسته بندی",
     "دسته‌بندی",
@@ -231,7 +219,31 @@ def parse_structured_response(text: str) -> OutboundPlan | None:
         return None
 
 
-_ARABIC_FIX = str.maketrans({"ي": "ی", "ك": "ک", "‌": " "})
+_ARABIC_FIX = str.maketrans({
+    "ي": "ی",
+    "ك": "ک",
+    "‌": " ",
+    "۰": "0",
+    "۱": "1",
+    "۲": "2",
+    "۳": "3",
+    "۴": "4",
+    "۵": "5",
+    "۶": "6",
+    "۷": "7",
+    "۸": "8",
+    "۹": "9",
+    "٠": "0",
+    "١": "1",
+    "٢": "2",
+    "٣": "3",
+    "٤": "4",
+    "٥": "5",
+    "٦": "6",
+    "٧": "7",
+    "٨": "8",
+    "٩": "9",
+})
 
 
 def _normalize_text(text: str | None) -> str:
@@ -398,6 +410,7 @@ def build_rule_based_plan(
     is_first_message: bool,
 ) -> OutboundPlan | None:
     normalized = _normalize_text(text)
+    token_count = len(normalized.split()) if normalized else 0
 
     if not text and message_type in {"audio", "image", "video", "media"}:
         return OutboundPlan(type="text", text=fallback_for_message_type(message_type))
@@ -409,6 +422,18 @@ def build_rule_based_plan(
 
     if is_first_message and is_greeting(normalized):
         return build_quick_reply_plan()
+
+    if is_greeting(normalized) and token_count <= 2:
+        return OutboundPlan(type="text", text="سلام! چطور می‌تونم کمکتون کنم؟")
+
+    if is_thanks(normalized) and token_count <= 4:
+        return OutboundPlan(type="text", text=build_thanks_response())
+
+    if is_decline(normalized) and token_count <= 5:
+        return OutboundPlan(type="text", text=build_decline_response())
+
+    if is_goodbye(normalized) and token_count <= 4:
+        return OutboundPlan(type="text", text=build_goodbye_response())
 
     if wants_trust(normalized):
         return OutboundPlan(type="text", text=build_trust_response())

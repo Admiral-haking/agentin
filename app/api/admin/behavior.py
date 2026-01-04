@@ -21,6 +21,8 @@ def _extract_behavior(user: User) -> UserBehaviorOut:
         raw_behavior = user.profile_json.get("behavior")
         if isinstance(raw_behavior, dict):
             behavior = raw_behavior
+    if not isinstance(behavior, dict):
+        behavior = {}
     updated_at = _parse_dt(behavior.get("updated_at"))
     if updated_at is None:
         updated_at = user.updated_at
