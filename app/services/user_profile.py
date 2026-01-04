@@ -57,8 +57,24 @@ def _parse_amount(token: str) -> int | None:
 def _extract_budget(text: str) -> dict[str, int]:
     results: dict[str, int] = {}
     tokens = re.split(r"\s+", text)
-    amounts = [_parse_amount(token) for token in tokens]
-    amounts = [amount for amount in amounts if amount]
+    amounts: list[int] = []
+    scale_tokens = {
+        "هزار": 1_000,
+        "میلیون": 1_000_000,
+        "میلیارد": 1_000_000_000,
+    }
+    idx = 0
+    while idx < len(tokens):
+        token = tokens[idx]
+        value = _parse_amount(token)
+        if value is not None:
+            if idx + 1 < len(tokens):
+                scale = scale_tokens.get(tokens[idx + 1])
+                if scale:
+                    value *= scale
+                    idx += 1
+            amounts.append(value)
+        idx += 1
     if not amounts:
         return results
     if "تا" in text or "بین" in text:
@@ -116,6 +132,10 @@ def extract_preferences(text: str | None) -> dict[str, Any]:
         sizes = list(dict.fromkeys(sizes + list(tags.sizes)))
     if sizes:
         updates["sizes"] = list(dict.fromkeys(sizes))
+    if tags.genders and "gender" not in updates:
+        unique_genders = list(dict.fromkeys(tags.genders))
+        if len(unique_genders) == 1:
+            updates["gender"] = unique_genders[0]
     if tags.categories:
         updates["categories"] = list(tags.categories)
     if tags.styles:

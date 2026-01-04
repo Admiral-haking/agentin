@@ -218,6 +218,15 @@ DECLINE_KEYWORDS = {
     "خیر",
     "بیخیال",
 }
+REPEAT_KEYWORDS = {
+    "دوباره",
+    "مجدد",
+    "یه بار دیگه",
+    "یک بار دیگه",
+    "تکرار",
+    "باز بفرست",
+    "باز بگو",
+}
 
 QUICK_REPLY_MENU = ["خرید", "ثبت سفارش", "مشاهده محصولات", "پشتیبانی", "آدرس شعب"]
 
@@ -383,6 +392,10 @@ def wants_more_products(text: str) -> bool:
     return _contains_any(text, CONTINUE_KEYWORDS)
 
 
+def wants_repeat(text: str) -> bool:
+    return _contains_any(text, REPEAT_KEYWORDS)
+
+
 def wants_trust(text: str) -> bool:
     return _contains_any(text, TRUST_KEYWORDS)
 
@@ -412,18 +425,15 @@ def build_quick_reply_plan() -> OutboundPlan:
 
 def build_address_response() -> str:
     branches_text = get_branches_text()
-    return (
-        f"آدرس شعب فروشگاه قلب دوم:\\n{branches_text}\\n"
-        "کدوم محدوده مشهد هستید تا نزدیک‌ترین شعبه رو معرفی کنم؟"
-    )
+    return f"آدرس شعب فروشگاه قلب دوم:\\n{branches_text}"
 
 
 def build_hours_response() -> str:
-    return f"{get_hours_text()}\nاگر قصد مراجعه دارید، کدوم محدوده مشهد هستید؟"
+    return get_hours_text()
 
 
 def build_phone_response() -> str:
-    return f"{get_phone_text()}\nبرای خرید آنلاین هم می‌تونید از وب‌سایت استفاده کنید."
+    return get_phone_text()
 
 
 def build_website_plan() -> OutboundPlan:

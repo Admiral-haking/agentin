@@ -29,11 +29,17 @@ from app.schemas.webhook import NormalizedMessage
 from app.knowledge.store import get_store_knowledge_text
 from app.services.app_log_store import log_event
 from app.services.guardrails import (
+    build_branches_plan,
+    build_contact_plan,
     build_decline_response,
     build_goodbye_response,
+    build_hours_response,
+    build_phone_response,
     build_product_details_question,
     build_rule_based_plan,
     build_thanks_response,
+    build_trust_response,
+    build_website_plan,
     fallback_for_message_type,
     fallback_llm_text,
     is_decline,
@@ -48,6 +54,7 @@ from app.services.guardrails import (
     wants_hours,
     wants_more_products,
     wants_phone,
+    wants_repeat,
     wants_trust,
     wants_website,
     wants_contact,
@@ -86,7 +93,15 @@ REQUIRED_FIELD_LABELS = {
     "size": "سایز",
     "style": "سبک (رسمی/اسپرت)",
     "budget": "بازه قیمت",
+    "color": "رنگ",
+    "category": "دسته‌بندی محصول",
 }
+DEFAULT_REQUIRED_FIELDS = ["gender", "size", "style", "budget"]
+SHOE_CATEGORIES = {"کفش", "صندل و دمپایی", "مجلسی و طبی"}
+APPAREL_CATEGORIES = {"پوشاک", "لباس زیر", "شال و روسری", "کلاه و شال گردن"}
+COSMETIC_CATEGORIES = {"آرایشی و بهداشتی", "آرایشی", "بهداشتی"}
+PERFUME_CATEGORIES = {"عطر و ادکلن", "ادکلن", "بادی اسپلش", "اسپری"}
+ACCESSORY_CATEGORIES = {"اکسسوری", "کیف", "جوراب", "لوازم جانبی"}
 PRODUCT_URL_HOSTS = {"ghlbedovom.com"}
 PRODUCT_URL_PREFIX = "/product/"
 PRODUCT_URL_RE = re.compile(r"https?://[^\s)]+")
@@ -190,6 +205,90 @@ def _is_repetitive_reply(text: str, last_text: str | None) -> bool:
     return overlap >= 0.9 and len(current_tokens) >= 4
 
 
+def _merge_pref_values(
+    base: dict[str, Any] | None, updates: dict[str, Any] | None
+) -> dict[str, Any]:
+    merged: dict[str, Any] = dict(base or {})
+    for key, value in (updates or {}).items():
+        if value is None:
+            continue
+        if isinstance(value, list):
+            existing = merged.get(key)
+            if isinstance(existing, list):
+                merged[key] = list(dict.fromkeys(existing + value))
+            else:
+                merged[key] = list(dict.fromkeys(value))
+        else:
+            merged[key] = value
+    return merged
+
+
+def _merge_recent_user_text(
+    history: list[Message], window_sec: float
+) -> str | None:
+    if window_sec <= 0 or not history:
+        return None
+    recent: list[str] = []
+    latest_time: datetime | None = None
+    for msg in reversed(history):
+        if msg.role != "user" or msg.type == "read":
+            break
+        if not msg.content_text:
+            continue
+        if latest_time is None:
+            latest_time = msg.created_at
+        if msg.created_at and latest_time:
+            if (latest_time - msg.created_at).total_seconds() > window_sec:
+                break
+        recent.append(msg.content_text.strip())
+    if len(recent) <= 1:
+        return None
+    return "\n".join(reversed(recent))
+
+
+def _required_fields_for_tags(query_tags: Any) -> list[str]:
+    categories = set(query_tags.categories)
+    if not categories:
+        return DEFAULT_REQUIRED_FIELDS
+    if categories & SHOE_CATEGORIES:
+        return DEFAULT_REQUIRED_FIELDS
+    if categories & APPAREL_CATEGORIES:
+        return ["gender", "size", "budget"]
+    if categories & COSMETIC_CATEGORIES:
+        return ["color", "budget"]
+    if categories & PERFUME_CATEGORIES:
+        return ["gender", "budget"]
+    if categories & ACCESSORY_CATEGORIES:
+        return ["gender", "budget"]
+    return ["budget"]
+
+
+def _find_last_store_topic(logs: list[AppLog]) -> str | None:
+    for log in reversed(logs):
+        data = log.data or {}
+        if data.get("intent") == "store_info":
+            topic = data.get("store_topic")
+            if isinstance(topic, str) and topic:
+                return topic
+    return None
+
+
+def _build_store_plan_for_topic(topic: str | None) -> OutboundPlan | None:
+    if topic == "contact":
+        return build_contact_plan()
+    if topic == "address":
+        return build_branches_plan()
+    if topic == "hours":
+        return OutboundPlan(type="text", text=build_hours_response())
+    if topic == "phone":
+        return OutboundPlan(type="text", text=build_phone_response())
+    if topic == "website":
+        return build_website_plan()
+    if topic == "trust":
+        return OutboundPlan(type="text", text=build_trust_response())
+    return None
+
+
 async def _update_product_state(
     session: AsyncSession,
     user: User,
@@ -231,70 +330,89 @@ def _build_match_debug(matches: list[Any]) -> list[dict[str, Any]]:
 def _split_show_products(text: str) -> tuple[bool, str]:
     if not text:
         return False, text
+    if SHOW_PRODUCTS_TOKEN in text or SHOW_PRODUCTS_TOKEN_ALT in text:
+        cleaned = text.replace(SHOW_PRODUCTS_TOKEN, "").replace(SHOW_PRODUCTS_TOKEN_ALT, "")
+        cleaned = "\n".join(line.rstrip() for line in cleaned.splitlines()).strip()
+        return True, cleaned
     lines = [line.rstrip() for line in text.splitlines()]
-    show_products = any(
-        line.strip() in {SHOW_PRODUCTS_TOKEN, SHOW_PRODUCTS_TOKEN_ALT}
-        for line in lines
-    )
-    if not show_products:
-        return False, text.strip()
-    cleaned = "\n".join(
-        line
-        for line in lines
-        if line.strip() not in {SHOW_PRODUCTS_TOKEN, SHOW_PRODUCTS_TOKEN_ALT}
-    ).strip()
-    return True, cleaned
+    cleaned = "\n".join(line for line in lines).strip()
+    return False, cleaned
 
 
 def _missing_required_fields(
     query_tags: Any,
-    prefs: dict[str, Any] | None,
+    fresh_prefs: dict[str, Any] | None,
+    required_fields: list[str] | None = None,
 ) -> tuple[list[str], dict[str, str]]:
     missing: list[str] = []
     known: dict[str, str] = {}
-    prefs = prefs or {}
+    prefs = fresh_prefs or {}
+    required_fields = required_fields or DEFAULT_REQUIRED_FIELDS
 
-    gender = None
-    if query_tags.genders:
-        gender = "، ".join(query_tags.genders)
-    elif isinstance(prefs.get("gender"), str):
-        gender = prefs["gender"]
-    if gender:
-        known["gender"] = gender
-    else:
-        missing.append("gender")
-
-    size = None
-    if query_tags.sizes:
-        size = "، ".join(query_tags.sizes)
-    else:
-        pref_sizes = prefs.get("sizes")
-        if isinstance(pref_sizes, list) and pref_sizes:
-            size = "، ".join(str(item) for item in pref_sizes)
-    if size:
-        known["size"] = size
-    else:
-        missing.append("size")
-
-    style = None
-    if query_tags.styles:
-        style = "، ".join(query_tags.styles)
-    if style:
-        known["style"] = style
-    else:
-        missing.append("style")
-
-    budget_min = prefs.get("budget_min") if isinstance(prefs.get("budget_min"), int) else None
-    budget_max = prefs.get("budget_max") if isinstance(prefs.get("budget_max"), int) else None
-    if budget_min is not None or budget_max is not None:
-        if budget_min is not None and budget_max is not None:
-            known["budget"] = f"{budget_min:,} تا {budget_max:,} تومان"
-        elif budget_min is not None:
-            known["budget"] = f"از {budget_min:,} تومان به بالا"
+    if "category" in required_fields:
+        if query_tags.categories:
+            known["category"] = "، ".join(query_tags.categories)
         else:
-            known["budget"] = f"تا {budget_max:,} تومان"
-    else:
-        missing.append("budget")
+            missing.append("category")
+
+    if "gender" in required_fields:
+        gender = None
+        if query_tags.genders:
+            gender = "، ".join(query_tags.genders)
+        elif isinstance(prefs.get("gender"), str):
+            gender = prefs["gender"]
+        if gender:
+            known["gender"] = gender
+        else:
+            missing.append("gender")
+
+    if "size" in required_fields:
+        size = None
+        if query_tags.sizes:
+            size = "، ".join(query_tags.sizes)
+        else:
+            pref_sizes = prefs.get("sizes")
+            if isinstance(pref_sizes, list) and pref_sizes:
+                size = "، ".join(str(item) for item in pref_sizes)
+        if size:
+            known["size"] = size
+        else:
+            missing.append("size")
+
+    if "style" in required_fields:
+        style = None
+        if query_tags.styles:
+            style = "، ".join(query_tags.styles)
+        if style:
+            known["style"] = style
+        else:
+            missing.append("style")
+
+    if "color" in required_fields:
+        color = None
+        if query_tags.colors:
+            color = "، ".join(query_tags.colors)
+        else:
+            pref_colors = prefs.get("colors")
+            if isinstance(pref_colors, list) and pref_colors:
+                color = "، ".join(str(item) for item in pref_colors)
+        if color:
+            known["color"] = color
+        else:
+            missing.append("color")
+
+    if "budget" in required_fields:
+        budget_min = prefs.get("budget_min") if isinstance(prefs.get("budget_min"), int) else None
+        budget_max = prefs.get("budget_max") if isinstance(prefs.get("budget_max"), int) else None
+        if budget_min is not None or budget_max is not None:
+            if budget_min is not None and budget_max is not None:
+                known["budget"] = f"{budget_min:,} تا {budget_max:,} تومان"
+            elif budget_min is not None:
+                known["budget"] = f"از {budget_min:,} تومان به بالا"
+            else:
+                known["budget"] = f"تا {budget_max:,} تومان"
+        else:
+            missing.append("budget")
 
     return missing, known
 
@@ -358,6 +476,8 @@ def _contains_required_fields(text: str, missing: list[str]) -> bool:
         "size": ["سایز", "اندازه"],
         "style": ["رسمی", "اسپرت", "روزمره", "کلاسیک"],
         "budget": ["قیمت", "تومان", "بازه", "بودجه"],
+        "color": ["رنگ", "رنگی", "مشکی", "سفید"],
+        "category": ["دسته", "مدل", "نوع", "کفش", "لباس", "عطر", "آرایشی"],
     }
     return all(any(keyword in lowered for keyword in checks[field]) for field in missing)
 
@@ -681,6 +801,23 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             history = await get_recent_history(
                 session, conversation.id, history_limit
             )
+            merged_text = _merge_recent_user_text(
+                history, settings.MESSAGE_DEBOUNCE_SEC
+            )
+            if merged_text and merged_text != (normalized.text or "").strip():
+                normalized.text = merged_text
+                await log_event(
+                    session,
+                    level="info",
+                    event_type="debounce_merge",
+                    data={
+                        "conversation_id": conversation.id,
+                        "message_id": record.id,
+                        "sender_id": normalized.sender_id,
+                    },
+                    commit=False,
+                )
+                await session.commit()
             last_assistant_text = _last_assistant_text(history)
             is_first_message = (
                 sum(1 for msg in history if msg.role == "user" and msg.type != "read")
@@ -704,7 +841,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 return merged
 
             llm_first_all = settings.LLM_FIRST_ALL
-            intent_text = (normalized.text or "").strip()
+            intent_text = (merged_text or normalized.text or "").strip()
             query_text = " ".join(part for part in [intent_text, analysis_text] if part).strip()
             lowered = intent_text.lower()
             behavior_input = intent_text or analysis_text
@@ -872,6 +1009,54 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     )
                     return
 
+            if wants_repeat(intent_text):
+                explicit_topic = None
+                if wants_contact(lowered):
+                    explicit_topic = "contact"
+                elif wants_hours(lowered):
+                    explicit_topic = "hours"
+                elif wants_address(lowered):
+                    explicit_topic = "address"
+                elif wants_phone(lowered):
+                    explicit_topic = "phone"
+                elif wants_website(lowered):
+                    explicit_topic = "website"
+                elif wants_trust(lowered):
+                    explicit_topic = "trust"
+
+                store_topic = explicit_topic
+                if store_topic is None:
+                    recent_logs = await get_recent_response_logs(
+                        session, conversation.id, max(5, settings.RESPONSE_LOG_CONTEXT_LIMIT)
+                    )
+                    store_topic = _find_last_store_topic(recent_logs)
+                plan = _build_store_plan_for_topic(store_topic)
+                if plan:
+                    await send_plan_and_store(
+                        session,
+                        conversation.id,
+                        normalized.sender_id,
+                        plan,
+                        meta=_merge_meta({
+                            "source": "guardrails",
+                            "intent": "repeat",
+                            "store_topic": store_topic,
+                        }),
+                    )
+                    return
+                if last_assistant_text:
+                    await send_and_store(
+                        session,
+                        conversation.id,
+                        normalized.sender_id,
+                        last_assistant_text,
+                        meta=_merge_meta({
+                            "source": "guardrails",
+                            "intent": "repeat",
+                        }),
+                    )
+                    return
+
             if llm_first_all:
                 token_count = len(intent_text.split()) if intent_text else 0
                 if is_thanks(lowered) and token_count <= 4:
@@ -988,6 +1173,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     )
                 return
 
+            pref_updates: dict[str, Any] = {}
             if query_text:
                 pref_updates = extract_preferences(query_text)
                 if pref_updates:
@@ -1112,8 +1298,11 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             prefs = None
             if isinstance(user.profile_json, dict):
                 prefs = user.profile_json.get("prefs")
-            matched_products_for_llm = _rank_products_by_prefs(matched_products_for_llm, prefs)
-            matched_products = _rank_products_by_prefs(matched_products, prefs)
+            prefs_current = _merge_pref_values(prefs, pref_updates)
+            matched_products_for_llm = _rank_products_by_prefs(
+                matched_products_for_llm, prefs_current
+            )
+            matched_products = _rank_products_by_prefs(matched_products, prefs_current)
             matched_product_ids = [product.id for product in matched_products]
             matched_product_slugs = [product.slug for product in matched_products if product.slug]
             query_tags_meta = {
@@ -1161,7 +1350,10 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             required_known: dict[str, str] = {}
             required_question_text: str | None = None
             if settings.LLM_REQUIRE_FIELDS_ON_LOW_CONF and low_confidence:
-                required_fields, required_known = _missing_required_fields(query_tags, prefs)
+                target_fields = _required_fields_for_tags(query_tags)
+                required_fields, required_known = _missing_required_fields(
+                    query_tags, pref_updates, target_fields
+                )
                 if required_fields:
                     required_question_text = _format_required_question(required_fields, required_known)
                     required_question_text = _limit_questions(required_question_text, 1)
