@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from typing import Iterable
+from urllib.parse import urlparse
 
 from pydantic import ValidationError
 
@@ -37,6 +38,7 @@ PUNCT_SPACE_RE = re.compile(r"\s+([،؛:!؟.,])")
 PERSIAN_LETTER_RE = re.compile(r"[\u0600-\u06FF]")
 LATIN_LETTER_RE = re.compile(r"[A-Za-z]")
 EMOJI_RE = re.compile(r"[\U0001F300-\U0001FAFF]")
+URL_RE = re.compile(r"(https?://\S+|ghlbedovom\.com\S*)")
 
 GREETING_KEYWORDS = {
     "سلام",
@@ -219,6 +221,26 @@ DECLINE_KEYWORDS = {
     "خیر",
     "بیخیال",
 }
+PURCHASE_CONFIRM_KEYWORDS = {
+    "همینو میخوام",
+    "همین رو میخوام",
+    "همین میخوام",
+    "اینو میخوام",
+    "این رو میخوام",
+    "این میخوام",
+    "میخوامش",
+    "میخوام بخرم",
+    "میخرم",
+    "می خرم",
+    "میخرمش",
+    "میخواهم",
+    "می‌خواهم",
+    "می‌خوام",
+    "ثبت کن",
+    "ثبت سفارش",
+    "سفارش بده",
+    "میخرم الان",
+}
 REPEAT_KEYWORDS = {
     "دوباره",
     "مجدد",
@@ -295,6 +317,20 @@ def fallback_llm_text(override: str | None = None) -> str:
     return FALLBACK_LLM
 
 
+def _plan_to_text(plan: OutboundPlan) -> str:
+    if plan.text:
+        return plan.text
+    if plan.type == "generic_template":
+        lines: list[str] = []
+        for element in plan.elements:
+            line = element.title
+            if element.subtitle:
+                line = f"{line} - {element.subtitle}"
+            lines.append(line)
+        return "\n".join(lines)
+    return ""
+
+
 def parse_structured_response(text: str) -> OutboundPlan | None:
     stripped = text.strip()
     if not stripped.startswith("{"):
@@ -361,6 +397,37 @@ def _is_mostly_latin(text: str) -> bool:
     if latin_count < 10:
         return False
     return persian_count < max(3, latin_count // 4)
+
+
+def _extract_urls(text: str) -> list[str]:
+    if not text:
+        return []
+    urls: list[str] = []
+    for match in URL_RE.findall(text):
+        url = match.strip().rstrip(").,")
+        if not url:
+            continue
+        if not url.startswith("http"):
+            url = f"https://{url.lstrip('/')}"
+        urls.append(url)
+    return urls
+
+
+def _is_root_link(url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.netloc not in {"ghlbedovom.com", "www.ghlbedovom.com"}:
+        return False
+    return parsed.path in {"", "/"}
+
+
+def _should_force_persian(reply_text: str, user_text: str | None) -> bool:
+    if not reply_text:
+        return False
+    if PERSIAN_LETTER_RE.search(reply_text):
+        return False
+    if not LATIN_LETTER_RE.search(reply_text):
+        return False
+    return bool(PERSIAN_LETTER_RE.search(user_text or ""))
 
 
 def _contains_any(text: str, keywords: set[str]) -> bool:
@@ -437,6 +504,13 @@ def wants_product_link(text: str) -> bool:
     return any(keyword in normalized for keyword in LINK_KEYWORDS)
 
 
+def is_purchase_confirmation(text: str | None) -> bool:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return False
+    return any(keyword in normalized for keyword in PURCHASE_CONFIRM_KEYWORDS)
+
+
 def wants_trust(text: str) -> bool:
     return _contains_any(text, TRUST_KEYWORDS)
 
@@ -491,11 +565,11 @@ def build_trust_response() -> str:
 
 
 def build_contact_response() -> str:
-    return get_contact_text()
+    return get_contact_text(include_website=False)
 
 
 def build_contact_plan() -> OutboundPlan:
-    links = get_contact_links()
+    links = get_contact_links(include_website=False)
     elements: list[TemplateElement] = []
     for item in links:
         title = item.get("title") or "ارتباط"
@@ -756,9 +830,8 @@ def validate_reply_or_rewrite(
     allow_generic_slots: bool,
 ) -> tuple[OutboundPlan, list[str]]:
     reasons: list[str] = []
-    if plan.type not in {"text", "button", "quick_reply"}:
-        return plan, reasons
-    text = plan.text or ""
+    original_plan = plan
+    text = plan.text or _plan_to_text(plan)
     normalized_user = _normalize_text(user_message)
     selected_product = None
     if isinstance(state, dict):
@@ -788,11 +861,22 @@ def validate_reply_or_rewrite(
         reply = "بفرمایید دقیقاً کدوم اطلاعات فروشگاه مدنظرتونه؟"
         return OutboundPlan(type="text", text=reply), ["template_blocked:store_info"]
 
+    if any(_is_root_link(url) for url in _extract_urls(text)) and not wants_website(normalized_user):
+        if intent == "store_info":
+            reply = "اگر لینک سایت رو لازم دارید، بفرمایید تا دقیق بفرستم."
+        else:
+            reply = "برای لینک دقیق محصول، لطفاً اسم/مدل یا عکس محصول رو بفرستید."
+        return OutboundPlan(type="text", text=reply), ["root_link_blocked"]
+
+    if settings.DEFAULT_LANGUAGE == "fa" and _should_force_persian(text, user_message):
+        reply = fallback_llm_text()
+        return OutboundPlan(type="text", text=reply), ["language_forced_fa"]
+
     if not allow_generic_slots and _looks_like_generic_slot_prompt(text):
-        reply = "برای معرفی دقیق‌تر، لطفاً نوع و رنگ مدنظرتون رو بفرستید."
+        reply = "برای معرفی دقیق‌تر، لطفاً نوع/رنگ یا مدل دقیق رو بفرستید."
         return OutboundPlan(type="text", text=reply), ["template_blocked:category_slots"]
 
-    if not has_products_context and not selected_product:
+    if text and not has_products_context and not selected_product:
         if _contains_price(text):
             reply = "برای اعلام قیمت دقیق، لطفاً اسم/مدل محصول یا یک عکس بفرستید."
             return OutboundPlan(type="text", text=reply), ["hallucination_prevented:price"]
@@ -805,8 +889,13 @@ def validate_reply_or_rewrite(
         reply = f"اوکی، بازه قیمت مدنظرتون {budget_phrase} هست. مدل دقیق یا عکسش رو بفرستید."
         return OutboundPlan(type="text", text=reply), ["budget_reflected"]
 
-    text = _limit_questions(text, 1)
-    text = _limit_sentences(text, 4)
-    text = _limit_emojis(text, 1)
-    plan.text = text
-    return plan, reasons
+    if text:
+        text = _limit_questions(text, 1)
+        text = _limit_sentences(text, 4)
+        text = _limit_emojis(text, 1)
+    if original_plan.type in {"text", "button", "quick_reply"}:
+        plan.text = text or plan.text or fallback_llm_text()
+        return plan, reasons
+    if reasons:
+        return OutboundPlan(type="text", text=text or fallback_llm_text()), reasons
+    return original_plan, reasons

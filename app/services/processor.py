@@ -45,6 +45,7 @@ from app.services.guardrails import (
     is_decline,
     is_goodbye,
     is_greeting,
+    is_purchase_confirmation,
     is_thanks,
     needs_product_details,
     plan_outbound,
@@ -88,10 +89,13 @@ from app.services.conversation_state import (
 from app.services.cross_sell import find_cross_sell_product
 from app.services.followups import cancel_followups_for_conversation, schedule_followup_task
 from app.services.product_presenter import (
+    build_category_links_plan,
     build_product_plan,
     build_product_url,
+    build_selected_product_payload,
     wants_product_list,
 )
+from app.services.intent_router import route_intent
 from app.services.product_taxonomy import infer_tags
 from app.services.prompts import load_prompt
 from app.services.media_analyzer import analyze_image_url, is_likely_image_url
@@ -175,23 +179,6 @@ def _plan_to_text(plan: OutboundPlan) -> str:
     return fallback_for_message_type("text")
 
 
-def _build_selected_product_payload(product: Product) -> dict[str, Any]:
-    availability = (
-        product.availability.value
-        if hasattr(product.availability, "value")
-        else str(product.availability or "")
-    )
-    return {
-        "product_id": product.id,
-        "title": product.title,
-        "slug": product.slug,
-        "page_url": product.page_url or build_product_url(product),
-        "price": product.price,
-        "old_price": product.old_price,
-        "availability": availability or None,
-    }
-
-
 def _build_more_products_plan() -> OutboundPlan:
     return OutboundPlan(
         type="quick_reply",
@@ -229,13 +216,6 @@ def _limit_questions(text: str, max_questions: int) -> str:
 def _normalize_repeat(text: str) -> str:
     cleaned = REPEAT_CLEAN_RE.sub(" ", text.lower())
     return " ".join(cleaned.split())
-
-
-def _is_purchase_confirmation(text: str | None) -> bool:
-    normalized = _normalize_repeat(text or "")
-    if not normalized:
-        return False
-    return any(keyword in normalized for keyword in PURCHASE_CONFIRM_KEYWORDS)
 
 
 def _is_repetitive_reply(text: str, last_text: str | None) -> bool:
@@ -809,27 +789,6 @@ SUPPORT_KEYWORDS = {
     "مرجوع",
     "پشتیبانی",
 }
-PURCHASE_CONFIRM_KEYWORDS = {
-    "همینو میخوام",
-    "همین رو میخوام",
-    "همین میخوام",
-    "اینو میخوام",
-    "این رو میخوام",
-    "این میخوام",
-    "میخوامش",
-    "میخوام بخرم",
-    "میخرم",
-    "می خرم",
-    "میخرمش",
-    "میخواهم",
-    "می‌خواهم",
-    "می‌خوام",
-    "ثبت کن",
-    "ثبت سفارش",
-    "سفارش بده",
-    "میخرم الان",
-}
-
 FAQ_MATCH_MIN_LEN = 4
 
 
@@ -1113,6 +1072,12 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             lowered = intent_text.lower()
             behavior_input = intent_text or analysis_text
             conversation_state_payload: dict[str, Any] | None = None
+            router_decision = route_intent(query_text or intent_text)
+            router_intent = router_decision.intent
+            router_category = router_decision.category
+            router_confidence = router_decision.confidence
+            router_evidence = list(router_decision.evidence_keywords)
+            router_risk = router_decision.risk_level
 
             async def _touch_state(
                 intent: str,
@@ -1121,6 +1086,9 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 filled_slots: dict[str, Any] | None = None,
                 selected_product: dict[str, Any] | None = None,
                 preserve_selected_product: bool = True,
+                last_handler_used: str | None = None,
+                increment_loop: bool = False,
+                reset_loop: bool = False,
             ) -> dict[str, Any] | None:
                 state = await get_or_create_state(session, conversation.id)
                 prior_payload = build_state_payload(state)
@@ -1136,6 +1104,9 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     selected_product=selected_product,
                     preserve_selected_product=preserve_selected_product,
                     last_user_message_id=last_user_message_id,
+                    last_handler_used=last_handler_used,
+                    increment_loop=increment_loop,
+                    reset_loop=reset_loop,
                 )
                 next_payload = build_state_payload(state)
                 await log_event(
@@ -1196,14 +1167,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     )
                     await session.commit()
 
-                store_intent = (
-                    is_greeting(lowered)
-                    or wants_website(lowered)
-                    or wants_address(lowered)
-                    or wants_hours(lowered)
-                    or wants_phone(lowered)
-                    or wants_trust(lowered)
-                )
+                store_intent = router_intent == "store_info"
                 if not llm_first_all:
                     if is_thanks(lowered):
                         conversation_state_payload = await _touch_state(
@@ -1265,6 +1229,8 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                             conversation_state_payload = await _touch_state(
                                 "store_info",
                                 category=infer_state_category(query_text),
+                                last_handler_used="store_info",
+                                reset_loop=True,
                             )
                             await send_plan_and_store(
                                 session,
@@ -1274,6 +1240,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                                 meta=_merge_meta({
                                     "source": "guardrails",
                                     "intent": "store_info",
+                                    "handler": "store_info",
                                     "store_topic": store_topic,
                                 }),
                             )
@@ -1285,7 +1252,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     profile, behavior_input, behavior_summary, behavior_recent
                 )
 
-            support_intent = False
+            support_intent = router_intent == "complaint_support"
             if behavior_match and behavior_match.pattern in {"angry_customer", "checkout_help"}:
                 support_intent = True
             if any(keyword in lowered for keyword in SUPPORT_KEYWORDS):
@@ -1306,37 +1273,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 )
                 product_from_url = result.scalars().first()
                 if product_from_url:
-                    selected_product_state = _build_selected_product_payload(product_from_url)
-
-            link_request = wants_product_link(intent_text)
-            purchase_confirm = _is_purchase_confirmation(intent_text)
-            if (link_request or purchase_confirm) and not selected_product_state:
-                recent_product, recent_count = await _resolve_recent_product_choice(
-                    session, conversation.id
-                )
-                if recent_product:
-                    selected_product_state = _build_selected_product_payload(recent_product)
-                elif recent_count > 1:
-                    conversation_state_payload = await _touch_state(
-                        "product_search",
-                        category=infer_state_category(query_text),
-                        required_slots=state.slots_required,
-                        filled_slots=state.slots_filled,
-                    )
-                    clarification = (
-                        "کدوم مدل مدنظرتونه؟ لطفاً اسم دقیق یا لینک محصول رو بفرستید."
-                    )
-                    await send_and_store(
-                        session,
-                        conversation.id,
-                        normalized.sender_id,
-                        clarification,
-                        meta=_merge_meta({
-                            "source": "guardrails",
-                            "intent": "product_disambiguate",
-                        }),
-                    )
-                    return
+                    selected_product_state = build_selected_product_payload(product_from_url)
 
             if wants_repeat(intent_text):
                 conversation_state_payload = await _touch_state(
@@ -1344,6 +1281,8 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     category=state.category or infer_state_category(query_text),
                     required_slots=state.slots_required,
                     filled_slots=state.slots_filled,
+                    last_handler_used="repeat",
+                    reset_loop=True,
                 )
                 explicit_topic = None
                 if wants_contact(lowered):
@@ -1382,7 +1321,48 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         meta=_merge_meta({
                             "source": "guardrails",
                             "intent": "repeat",
+                            "handler": "repeat",
                             **repeat_meta,
+                        }),
+                    )
+                    await log_event(
+                        session,
+                        level="info",
+                        event_type="repeat_handled",
+                        data={
+                            "conversation_id": conversation.id,
+                            "user_id": user.id,
+                            "store_topic": store_topic,
+                        },
+                    )
+                    return
+
+            link_request = wants_product_link(intent_text)
+            purchase_confirm = is_purchase_confirmation(intent_text)
+            if (link_request or purchase_confirm) and not selected_product_state:
+                recent_product, recent_count = await _resolve_recent_product_choice(
+                    session, conversation.id
+                )
+                if recent_product:
+                    selected_product_state = build_selected_product_payload(recent_product)
+                elif recent_count > 1:
+                    conversation_state_payload = await _touch_state(
+                        "product_search",
+                        category=infer_state_category(query_text),
+                        required_slots=state.slots_required,
+                        filled_slots=state.slots_filled,
+                    )
+                    clarification = (
+                        "کدوم مدل مدنظرتونه؟ لطفاً اسم دقیق یا لینک محصول رو بفرستید."
+                    )
+                    await send_and_store(
+                        session,
+                        conversation.id,
+                        normalized.sender_id,
+                        clarification,
+                        meta=_merge_meta({
+                            "source": "guardrails",
+                            "intent": "product_disambiguate",
                         }),
                     )
                     return
@@ -1397,6 +1377,8 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         category=infer_state_category(query_text),
                         selected_product=selected_product_state,
                         preserve_selected_product=False,
+                        last_handler_used="product_link",
+                        reset_loop=True,
                     )
                     reply_text = f"حتماً 🙂 لینک مستقیم محصول: {page_url}"
                     await send_plan_and_store(
@@ -1407,6 +1389,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         meta=_merge_meta({
                             "source": "guardrails",
                             "intent": "product_link",
+                            "handler": "product_link",
                             "product_id": selected_product_state.get("product_id")
                             if isinstance(selected_product_state, dict)
                             else None,
@@ -1426,6 +1409,8 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 conversation_state_payload = await _touch_state(
                     "product_search",
                     category=infer_state_category(query_text),
+                    last_handler_used="product_link_missing",
+                    reset_loop=True,
                 )
                 await send_plan_and_store(
                     session,
@@ -1438,6 +1423,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     meta=_merge_meta({
                         "source": "guardrails",
                         "intent": "product_link_missing",
+                        "handler": "product_link_missing",
                     }),
                 )
                 await log_event(
@@ -1458,6 +1444,8 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     category=infer_state_category(query_text),
                     selected_product=selected_product_state,
                     preserve_selected_product=False,
+                    last_handler_used="order_flow",
+                    reset_loop=True,
                 )
                 reply_text = "حتماً 🙂 برای ثبت سفارش، لطفاً سایز/رنگ و تعداد مدنظرتون رو بگید."
                 await send_plan_and_store(
@@ -1468,6 +1456,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     meta=_merge_meta({
                         "source": "order_flow",
                         "intent": "order_flow",
+                        "handler": "order_flow",
                         "product_id": selected_product_state.get("product_id")
                         if isinstance(selected_product_state, dict)
                         else None,
@@ -1485,14 +1474,16 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 )
                 return
 
-            store_info_intent = (
-                wants_contact(lowered)
-                or wants_website(lowered)
-                or wants_address(lowered)
-                or wants_hours(lowered)
-                or wants_phone(lowered)
-                or wants_trust(lowered)
-            )
+            store_info_intent = router_intent == "store_info"
+            if not store_info_intent:
+                store_info_intent = (
+                    wants_contact(lowered)
+                    or wants_website(lowered)
+                    or wants_address(lowered)
+                    or wants_hours(lowered)
+                    or wants_phone(lowered)
+                    or wants_trust(lowered)
+                )
             if store_info_intent:
                 store_topic = None
                 if wants_contact(lowered):
@@ -1516,6 +1507,8 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     conversation_state_payload = await _touch_state(
                         "store_info",
                         category=infer_state_category(query_text),
+                        last_handler_used="store_info",
+                        reset_loop=True,
                     )
                     await send_plan_and_store(
                         session,
@@ -1525,6 +1518,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         meta=_merge_meta({
                             "source": "guardrails",
                             "intent": "store_info",
+                            "handler": "store_info",
                             "store_topic": store_topic,
                         }),
                     )
@@ -1704,31 +1698,32 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         await session.commit()
 
             order_intent = bool(behavior_match and behavior_match.pattern == "ready_to_buy")
+            if router_intent == "order_intent":
+                order_intent = True
             order_plan = await handle_order_flow(session, user, intent_text)
             order_hint_text = None
             if order_plan:
                 order_hint_text = _plan_to_text(order_plan)
                 order_intent = True
-                if not llm_first_all:
-                    conversation_state_payload = await _touch_state(
-                        "order",
-                        category=infer_state_category(query_text),
-                    )
-                    await send_plan_and_store(
-                        session,
-                        conversation.id,
-                        normalized.sender_id,
-                        order_plan,
-                        meta=_merge_meta({"source": "order_flow", "intent": "order_flow"}),
-                    )
-                    await schedule_followup_task(
-                        session,
-                        conversation,
-                        user,
-                        reason="order_flow",
-                        payload={"text": order_hint_text},
-                    )
-                    return
+                conversation_state_payload = await _touch_state(
+                    "order",
+                    category=infer_state_category(query_text),
+                )
+                await send_plan_and_store(
+                    session,
+                    conversation.id,
+                    normalized.sender_id,
+                    order_plan,
+                    meta=_merge_meta({"source": "order_flow", "intent": "order_flow"}),
+                )
+                await schedule_followup_task(
+                    session,
+                    conversation,
+                    user,
+                    reason="order_flow",
+                    payload={"text": order_hint_text},
+                )
+                return
 
             if support_intent:
                 ticket = await get_or_create_ticket(
@@ -1751,6 +1746,25 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     commit=False,
                 )
                 await session.commit()
+                conversation_state_payload = await _touch_state(
+                    "support",
+                    category=infer_state_category(query_text),
+                    last_handler_used="complaint_support",
+                    reset_loop=True,
+                )
+                await send_and_store(
+                    session,
+                    conversation.id,
+                    normalized.sender_id,
+                    build_angry_response(),
+                    meta=_merge_meta({
+                        "source": "support_flow",
+                        "intent": "complaint_support",
+                        "handler": "complaint_support",
+                        "ticket_id": ticket.id,
+                    }),
+                )
+                return
 
             url_slug = _extract_product_slug(intent_text)
             product_from_url: Product | None = None
@@ -1900,6 +1914,27 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     confidence_ok = True
                 low_confidence = not confidence_ok
 
+            if (
+                not selected_product_state
+                and confidence_ok
+                and matched_products
+                and router_intent in {"product_specific", "price_availability"}
+            ):
+                selected_product_state = build_selected_product_payload(matched_products[0])
+                await log_event(
+                    session,
+                    level="info",
+                    event_type="selected_product_locked",
+                    data={
+                        "conversation_id": conversation.id,
+                        "user_id": user.id,
+                        "selected_product": selected_product_state,
+                        "reason": "router_intent_lock",
+                    },
+                    commit=False,
+                )
+                await session.commit()
+
             required_fields: list[str] = []
             required_known: dict[str, str] = {}
             required_question_text: str | None = None
@@ -1916,6 +1951,11 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     )
                     required_question_text = _limit_questions(required_question_text, 1)
                     low_confidence = True
+            if selected_product_state:
+                required_fields = []
+                required_known = {}
+                required_question_text = None
+                low_confidence = False
             low_confidence_block = bool(required_fields)
             confidence_for_cards = confidence_ok and not low_confidence_block
 
@@ -1927,7 +1967,21 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 support_intent=support_intent,
                 order_intent=order_intent,
             )
-            state_category = infer_state_category(query_text)
+            if router_intent == "store_info":
+                state_intent = "store_info"
+            elif router_intent == "complaint_support":
+                state_intent = "support"
+            elif router_intent == "order_intent":
+                state_intent = "order_flow"
+            elif router_intent == "product_link_request" and selected_product_state:
+                state_intent = "product_selected"
+            if selected_product_state:
+                state_intent = "product_selected"
+            state_category = (
+                router_category
+                if router_category and router_category != "unknown"
+                else infer_state_category(query_text)
+            )
             state_required_slots = required_fields if required_fields else None
             allow_generic_slots = bool(
                 state_intent == "product_search"
@@ -1952,6 +2006,11 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     "user_id": user.id,
                     "intent": state_intent,
                     "category": state_category,
+                    "router_intent": router_intent,
+                    "router_category": router_category,
+                    "router_confidence": router_confidence,
+                    "router_evidence": router_evidence,
+                    "router_risk": router_risk,
                 },
                 commit=False,
             )
@@ -1970,105 +2029,105 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 )
             await session.commit()
 
-            if not llm_first_all:
-                if (
-                    matched_products
-                    and (product_intent or needs_details or wants_products)
-                    and low_confidence_block
-                ):
-                    await send_and_store(
+            if (
+                matched_products
+                and (product_intent or needs_details or wants_products)
+                and low_confidence_block
+            ):
+                await send_and_store(
+                    session,
+                    conversation.id,
+                    normalized.sender_id,
+                    required_question_text
+                    or "برای معرفی دقیق‌تر، لطفاً جنسیت، سایز، سبک (رسمی/اسپرت) و بازه قیمت رو بگید.",
+                    meta=_merge_meta({
+                        "source": "product_match",
+                        "intent": "need_details",
+                        "product_ids": matched_product_ids,
+                        "product_slugs": matched_product_slugs,
+                        "confidence_ok": False,
+                        "match_debug": match_debug,
+                        "query_tags": query_tags_meta,
+                    }),
+                )
+                return
+
+            if matched_products and not store_intent and (confidence_for_cards or is_plain_list_request):
+                cross_sell_allowed = bool(
+                    (order_intent or (behavior_match and behavior_match.pattern == "ready_to_buy"))
+                    and confidence_ok
+                    and not low_confidence_block
+                )
+                products_for_plan = await _maybe_add_cross_sell(
+                    session,
+                    user,
+                    matched_products,
+                    allow=cross_sell_allowed,
+                )
+                product_plan = build_product_plan(query_text, products_for_plan)
+                if product_plan:
+                    plan_ids = [product.id for product in products_for_plan]
+                    plan_slugs = [product.slug for product in products_for_plan if product.slug]
+                    await send_plan_and_store(
                         session,
                         conversation.id,
                         normalized.sender_id,
-                        required_question_text
-                        or "برای معرفی دقیق‌تر، لطفاً جنسیت، سایز، سبک (رسمی/اسپرت) و بازه قیمت رو بگید.",
+                        product_plan,
                         meta=_merge_meta({
                             "source": "product_match",
-                            "intent": "need_details",
-                            "product_ids": matched_product_ids,
-                            "product_slugs": matched_product_slugs,
-                            "confidence_ok": False,
+                            "intent": "product_suggest",
+                            "product_ids": plan_ids,
+                            "product_slugs": plan_slugs,
+                            "confidence_ok": confidence_ok,
                             "match_debug": match_debug,
                             "query_tags": query_tags_meta,
                         }),
                     )
-                    return
-
-                if matched_products and not store_intent and (confidence_for_cards or is_plain_list_request):
-                    cross_sell_allowed = bool(
-                        (order_intent or (behavior_match and behavior_match.pattern == "ready_to_buy"))
-                        and confidence_ok
-                        and not low_confidence_block
-                    )
-                    products_for_plan = await _maybe_add_cross_sell(
-                        session,
-                        user,
+                    if _should_schedule_followup(
+                        behavior_match,
+                        order_intent,
+                        product_intent,
                         matched_products,
-                        allow=cross_sell_allowed,
-                    )
-                    product_plan = build_product_plan(query_text, products_for_plan)
-                    if product_plan:
-                        plan_ids = [product.id for product in products_for_plan]
-                        plan_slugs = [product.slug for product in products_for_plan if product.slug]
+                    ):
+                        await schedule_followup_task(
+                            session,
+                            conversation,
+                            user,
+                            reason="product_suggest",
+                            payload={"text": "اگر سوال یا سفارش داشتید، من در خدمتم."},
+                        )
+                    if (wants_products or is_plain_list_request) and more_results_available:
                         await send_plan_and_store(
                             session,
                             conversation.id,
                             normalized.sender_id,
-                            product_plan,
+                            _build_more_products_plan(),
                             meta=_merge_meta({
                                 "source": "product_match",
-                                "intent": "product_suggest",
-                                "product_ids": plan_ids,
-                                "product_slugs": plan_slugs,
-                                "confidence_ok": confidence_ok,
-                                "match_debug": match_debug,
-                                "query_tags": query_tags_meta,
+                                "intent": "product_more",
+                                "product_ids": matched_product_ids,
+                                "product_slugs": matched_product_slugs,
                             }),
                         )
-                        if _should_schedule_followup(
-                            behavior_match,
-                            order_intent,
-                            product_intent,
-                            matched_products,
-                        ):
-                            await schedule_followup_task(
-                                session,
-                                conversation,
-                                user,
-                                reason="product_suggest",
-                                payload={"text": "اگر سوال یا سفارش داشتید، من در خدمتم."},
-                            )
-                        if (wants_products or is_plain_list_request) and more_results_available:
-                            await send_plan_and_store(
-                                session,
-                                conversation.id,
-                                normalized.sender_id,
-                                _build_more_products_plan(),
-                                meta=_merge_meta({
-                                    "source": "product_match",
-                                    "intent": "product_more",
-                                    "product_ids": matched_product_ids,
-                                    "product_slugs": matched_product_slugs,
-                                }),
-                            )
-                        await _update_product_state(
-                            session,
-                            user,
-                            query_text,
-                            len(matched_products),
-                            len(matched_products_for_llm),
-                        )
-                        return
-                if product_intent and not matched_products:
-                    await send_and_store(
+                    await _update_product_state(
                         session,
-                        conversation.id,
-                        normalized.sender_id,
-                        "برای معرفی دقیق‌تر، لطفاً جنسیت، سایز، سبک (رسمی/اسپرت) و بازه قیمت رو بگید؛ اگر مدل خاصی دارید اسم یا عکسش رو بفرستید.",
-                        meta=_merge_meta({"source": "product_match", "intent": "no_match"}),
+                        user,
+                        query_text,
+                        len(matched_products),
+                        len(matched_products_for_llm),
                     )
                     return
+            if product_intent and not matched_products:
+                await send_and_store(
+                    session,
+                    conversation.id,
+                    normalized.sender_id,
+                    "برای معرفی دقیق‌تر، لطفاً جنسیت، سایز، سبک (رسمی/اسپرت) و بازه قیمت رو بگید؛ اگر مدل خاصی دارید اسم یا عکسش رو بفرستید.",
+                    meta=_merge_meta({"source": "product_match", "intent": "no_match"}),
+                )
+                return
 
+            if not llm_first_all:
                 if (intent_text or analysis_text) and _is_low_signal(intent_text or analysis_text):
                     if not (
                         is_greeting(lowered)
@@ -2343,6 +2402,19 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 )
                 reply_text = _limit_emojis(reply_text, 1)
                 if last_assistant_text and _is_repetitive_reply(reply_text, last_assistant_text):
+                    loop_payload = await _touch_state(
+                        state.intent or "unknown",
+                        category=state.category or infer_state_category(query_text),
+                        required_slots=state.slots_required,
+                        filled_slots=state.slots_filled,
+                        selected_product=selected_product_state,
+                        preserve_selected_product=True,
+                        last_handler_used="loop_detected",
+                        increment_loop=True,
+                    )
+                    loop_count = 0
+                    if isinstance(loop_payload, dict):
+                        loop_count = int(loop_payload.get("loop_counter") or 0)
                     await log_event(
                         session,
                         level="info",
@@ -2352,6 +2424,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                             "user_id": user.id,
                             "reply_text": reply_text,
                             "last_reply": last_assistant_text,
+                            "loop_counter": loop_count,
                         },
                         commit=False,
                     )
@@ -2363,6 +2436,13 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         reply_text = "چند گزینه نزدیک پیدا کردم؛ اگر جزئیات بیشتری داری بگو تا دقیق‌تر بفرستم."
                     else:
                         reply_text = "متوجه شدم؛ اگر جزئیات بیشتری داری بفرست تا بهتر راهنمایی کنم."
+                    if loop_count >= settings.LOOP_BREAKER_THRESHOLD:
+                        if store_intent:
+                            reply_text = "برای اینکه دقیق جواب بدم، بفرمایید دنبال کدوم اطلاعات فروشگاه هستید؟"
+                        elif support_intent:
+                            reply_text = build_angry_response()
+                        else:
+                            reply_text = "حق با شماست، اشتباه شد. اسم دقیق مدل یا یه عکس از محصول رو می‌فرستید؟"
                     reply_text = _limit_questions(reply_text, max_questions)
                     reply_text = _limit_sentences(
                         reply_text, settings.MAX_RESPONSE_SENTENCES
@@ -2976,8 +3056,6 @@ async def send_plan_and_store(
     if plan.type == "audio" and not plan.audio_url:
         plan.type = "text"
         plan.text = fallback_for_message_type("text")
-    if plan.text:
-        plan.text = plan.text[: settings.MAX_RESPONSE_CHARS].strip()
 
     if plan.type == "button":
         plan.buttons = plan.buttons[: settings.MAX_BUTTONS]
@@ -3015,6 +3093,91 @@ async def send_plan_and_store(
         if not plan.elements:
             plan.type = "text"
             plan.text = fallback_for_message_type("text")
+
+    guardrail_reasons: list[str] = []
+    if conversation_id:
+        state = await get_or_create_state(session, conversation_id)
+        state_payload = build_state_payload(state)
+        required_slots = (
+            state.slots_required if isinstance(state.slots_required, list) else []
+        )
+        allow_generic_slots = bool(
+            state.intent == "product_search"
+            and state.category in {"shoes", "apparel"}
+            and any(slot in {"gender", "size", "style", "budget"} for slot in required_slots)
+        )
+        has_products_context = bool(
+            meta
+            and (
+                meta.get("product_ids")
+                or meta.get("product_slugs")
+                or meta.get("product_context_count")
+            )
+        )
+        if plan.type == "generic_template":
+            has_products_context = True
+        guardrail_plan, guardrail_reasons = validate_reply_or_rewrite(
+            plan,
+            state_payload,
+            state.last_user_question,
+            has_products_context=has_products_context,
+            allow_generic_slots=allow_generic_slots,
+        )
+        if guardrail_reasons:
+            plan = guardrail_plan
+            await log_event(
+                session,
+                level="info",
+                event_type="reply_rewritten_by_guardrail",
+                data={
+                    "conversation_id": conversation_id,
+                    "receiver_id": receiver_id,
+                    "reasons": guardrail_reasons,
+                    "plan_type": plan.type,
+                },
+                commit=False,
+            )
+            for reason in guardrail_reasons:
+                if reason.startswith("template_blocked"):
+                    await log_event(
+                        session,
+                        level="info",
+                        event_type="template_blocked",
+                        data={
+                            "conversation_id": conversation_id,
+                            "receiver_id": receiver_id,
+                            "reason": reason,
+                        },
+                        commit=False,
+                    )
+                elif reason.startswith("hallucination_prevented"):
+                    await log_event(
+                        session,
+                        level="info",
+                        event_type="hallucination_prevented",
+                        data={
+                            "conversation_id": conversation_id,
+                            "receiver_id": receiver_id,
+                            "reason": reason,
+                        },
+                        commit=False,
+                    )
+                elif reason.startswith("link_request"):
+                    await log_event(
+                        session,
+                        level="info",
+                        event_type="link_request_handled",
+                        data={
+                            "conversation_id": conversation_id,
+                            "receiver_id": receiver_id,
+                            "reason": reason,
+                        },
+                        commit=False,
+                    )
+            await session.commit()
+
+    if plan.text:
+        plan.text = plan.text[: settings.MAX_RESPONSE_CHARS].strip()
 
     await log_event(
         session,
@@ -3175,15 +3338,19 @@ async def send_plan_and_store(
     session.add(record)
     await session.commit()
     action_key = None
+    handler_used = None
     if meta and meta.get("intent"):
         action_key = str(meta["intent"])
         if meta.get("store_topic"):
             action_key = f"{action_key}:{meta['store_topic']}"
+    if meta and meta.get("handler"):
+        handler_used = str(meta["handler"])
     if action_key:
         await record_bot_action(
             session,
             conversation_id,
             action_key,
             _plan_to_text(plan),
+            handler_used=handler_used,
         )
     return message_id

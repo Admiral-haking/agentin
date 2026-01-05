@@ -33,11 +33,14 @@ export const AiContextPage = () => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [clearNotice, setClearNotice] = useState<string | null>(null);
+  const [pinNotice, setPinNotice] = useState<string | null>(null);
+  const [pinProductId, setPinProductId] = useState('');
 
   const loadContext = async () => {
     setLoading(true);
     setError(null);
     setClearNotice(null);
+    setPinNotice(null);
     try {
       const query = new URLSearchParams();
       if (conversationId.trim()) {
@@ -68,6 +71,7 @@ export const AiContextPage = () => {
     setLoading(true);
     setError(null);
     setClearNotice(null);
+    setPinNotice(null);
     try {
       if (!conversationId.trim()) {
         throw new Error('برای شبیه‌سازی باید conversation_id وارد شود.');
@@ -103,6 +107,7 @@ export const AiContextPage = () => {
     setLoading(true);
     setError(null);
     setClearNotice(null);
+    setPinNotice(null);
     try {
       if (!conversationId.trim()) {
         throw new Error('برای پاک‌کردن وضعیت باید conversation_id وارد شود.');
@@ -116,6 +121,40 @@ export const AiContextPage = () => {
       setClearNotice('وضعیت گفتگو پاک شد.');
     } catch (err) {
       const message = err instanceof Error ? err.message : 'پاک‌کردن وضعیت ناموفق بود.';
+      setError(message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handlePinProduct = async () => {
+    setLoading(true);
+    setError(null);
+    setClearNotice(null);
+    setPinNotice(null);
+    try {
+      if (!conversationId.trim()) {
+        throw new Error('برای پین محصول باید conversation_id وارد شود.');
+      }
+      if (!pinProductId.trim()) {
+        throw new Error('شناسه محصول را وارد کنید.');
+      }
+      await fetchJson(
+        `${API_URL}/admin/ai/pin_selected_product`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            conversation_id: Number(conversationId),
+            product_id: Number(pinProductId),
+          }),
+        },
+        'پین کردن محصول ناموفق بود.'
+      );
+      await loadContext();
+      setPinNotice('محصول انتخاب‌شده ثبت شد.');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'پین کردن محصول ناموفق بود.';
       setError(message);
     } finally {
       setLoading(false);
@@ -167,6 +206,22 @@ export const AiContextPage = () => {
             >
               پاک‌کردن وضعیت گفتگو
             </Button>
+            <Stack direction={{ xs: 'column', md: 'row' }} spacing={2}>
+              <TextField
+                label="شناسه محصول برای پین"
+                value={pinProductId}
+                onChange={event => setPinProductId(event.target.value)}
+                fullWidth
+              />
+              <Button
+                variant="outlined"
+                color="primary"
+                onClick={handlePinProduct}
+                disabled={loading}
+              >
+                پین محصول انتخاب‌شده
+              </Button>
+            </Stack>
           </Stack>
         </CardContent>
       </Card>
@@ -217,6 +272,14 @@ export const AiContextPage = () => {
         <Card sx={{ mb: 2 }}>
           <CardContent>
             <Typography color="success.main">{clearNotice}</Typography>
+          </CardContent>
+        </Card>
+      )}
+
+      {pinNotice && (
+        <Card sx={{ mb: 2 }}>
+          <CardContent>
+            <Typography color="success.main">{pinNotice}</Typography>
           </CardContent>
         </Card>
       )}

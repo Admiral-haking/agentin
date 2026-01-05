@@ -14,7 +14,7 @@ from app.models.bot_settings import BotSettings
 from app.models.conversation import Conversation
 from app.models.user import User
 from app.schemas.admin.behavior import AIContextOut
-from app.schemas.admin.ai_context import AISimulateIn, AISimulateOut
+from app.schemas.admin.ai_context import AISimulateIn, AISimulateOut, AIPinProductIn
 from app.schemas.webhook import NormalizedMessage
 from app.services.context_bundle import build_context_bundle
 from app.services.product_catalog import get_catalog_snapshot
@@ -27,12 +27,19 @@ from app.services.user_behavior_store import build_behavior_snapshot, get_behavi
 from app.services.prompts import load_prompt
 from app.services.campaigns import get_active_campaigns
 from app.services.faqs import get_verified_faqs
-from app.services.conversation_state import build_state_payload
+from app.services.conversation_state import (
+    build_state_payload,
+    get_or_create_state,
+    infer_category as infer_state_category,
+    update_state,
+)
 from app.services.app_log_store import log_event
 from app.services.product_matcher import match_products_with_scores
 from app.services.llm_clients import LLMError, generate_reply
 from app.services.llm_router import choose_provider
 from app.services.guardrails import post_process, fallback_llm_text
+from app.services.product_presenter import build_selected_product_payload
+from app.models.product import Product
 
 router = APIRouter(prefix="/admin/ai", tags=["admin"])
 
@@ -312,3 +319,43 @@ async def simulate_reply(
         },
         sources=sources,
     )
+
+
+@router.post("/pin_selected_product")
+async def pin_selected_product(
+    payload: AIPinProductIn,
+    session: AsyncSession = Depends(get_session),
+    admin=Depends(require_role("admin")),
+) -> dict[str, object]:
+    conversation = await session.get(Conversation, payload.conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+    product = await session.get(Product, payload.product_id)
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+    state = await get_or_create_state(session, conversation.id)
+    selected_payload = build_selected_product_payload(product)
+    await update_state(
+        session,
+        conversation.id,
+        intent=state.intent or "product_selected",
+        category=state.category or infer_state_category(product.title or product.slug or ""),
+        slots_required=state.slots_required,
+        slots_filled=state.slots_filled,
+        last_user_question=state.last_user_question,
+        state=state,
+        selected_product=selected_payload,
+        preserve_selected_product=False,
+        last_handler_used="admin_pin",
+    )
+    await log_event(
+        session,
+        level="info",
+        event_type="selected_product_locked",
+        data={
+            "conversation_id": conversation.id,
+            "product_id": product.id,
+            "source": "admin_pin",
+        },
+    )
+    return {"status": "ok", "product_id": product.id}

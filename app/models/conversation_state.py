@@ -22,5 +22,7 @@ class ConversationState(TimestampMixin, Base):
     last_bot_action: Mapped[str | None] = mapped_column(String(64))
     last_bot_answer_by_intent: Mapped[dict | None] = mapped_column("last_bot_answers", JSONB)
     selected_product: Mapped[dict | None] = mapped_column(JSONB)
+    last_handler_used: Mapped[str | None] = mapped_column(String(64))
+    loop_counter: Mapped[int] = mapped_column(Integer, default=0)
 
     conversation = relationship("Conversation", back_populates="state")

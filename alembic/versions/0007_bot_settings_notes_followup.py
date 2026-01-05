@@ -15,10 +15,14 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("bot_settings", sa.Column("admin_notes", sa.Text()))
-    op.add_column("bot_settings", sa.Column("followup_enabled", sa.Boolean()))
-    op.add_column("bot_settings", sa.Column("followup_delay_hours", sa.Integer()))
-    op.add_column("bot_settings", sa.Column("followup_message", sa.Text()))
+    op.execute("ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS admin_notes TEXT")
+    op.execute(
+        "ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS followup_enabled BOOLEAN"
+    )
+    op.execute(
+        "ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS followup_delay_hours INTEGER"
+    )
+    op.execute("ALTER TABLE bot_settings ADD COLUMN IF NOT EXISTS followup_message TEXT")
 
 
 def downgrade() -> None:

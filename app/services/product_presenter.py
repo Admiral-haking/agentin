@@ -5,6 +5,7 @@ from urllib.parse import quote, urlparse
 from app.core.config import settings
 from app.models.product import Product
 from app.schemas.send import Button, OutboundPlan, QuickReplyOption, TemplateElement
+from app.knowledge.store import get_category_links
 
 PRODUCT_LIST_KEYWORDS = {
     "محصول",
@@ -27,6 +28,13 @@ IMAGE_KEYWORDS = {
     "image",
     "images",
 }
+CATEGORY_LINK_HINTS = {
+    "shoes": {"shoes", "sandals-and-slippers", "formal-and-medical"},
+    "apparel": {"pooshak", "underwear", "shawls-and-scarves", "hats-and-scarves"},
+    "cosmetics": {"cosmetics"},
+    "perfume": {"perfume-and-cologne"},
+    "accessories": {"aksesori", "bag", "accessories", "socks"},
+}
 
 
 def _format_price(value: int | None) -> str:
@@ -41,6 +49,23 @@ def _availability_label(value: str | None) -> str:
     if value == "outofstock":
         return "ناموجود"
     return "نامشخص"
+
+
+def build_selected_product_payload(product: Product) -> dict[str, object]:
+    availability = (
+        product.availability.value
+        if hasattr(product.availability, "value")
+        else str(product.availability or "")
+    )
+    return {
+        "product_id": product.id,
+        "title": product.title,
+        "slug": product.slug,
+        "page_url": product.page_url or build_product_url(product),
+        "price": product.price,
+        "old_price": product.old_price,
+        "availability": availability or None,
+    }
 
 
 def _proxy_image_url(value: str | None) -> str | None:
@@ -131,6 +156,34 @@ def wants_images(text: str | None) -> bool:
     if not normalized:
         return False
     return any(keyword in normalized for keyword in IMAGE_KEYWORDS)
+
+
+def build_category_links_plan(category: str | None = None) -> OutboundPlan | None:
+    links = get_category_links()
+    if not links:
+        return None
+    filtered = links
+    if category and category in CATEGORY_LINK_HINTS:
+        hints = CATEGORY_LINK_HINTS[category]
+        filtered = [
+            item
+            for item in links
+            if any(hint in (item.get("url") or "") for hint in hints)
+        ]
+    if not filtered:
+        filtered = links
+    buttons = [
+        Button(type="web_url", title=item["title"], url=item["url"])
+        for item in filtered[: settings.MAX_BUTTONS]
+        if item.get("title") and item.get("url")
+    ]
+    if not buttons:
+        return None
+    return OutboundPlan(
+        type="button",
+        text="برای شروع می‌تونید از این دسته‌ها انتخاب کنید:",
+        buttons=buttons,
+    )
 
 
 def _should_use_carousel(text: str | None, product_count: int) -> bool:

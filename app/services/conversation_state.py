@@ -116,6 +116,10 @@ async def update_state(
     selected_product: dict[str, Any] | None = None,
     preserve_selected_product: bool = True,
     last_user_message_id: int | None = None,
+    last_handler_used: str | None = None,
+    loop_counter: int | None = None,
+    increment_loop: bool = False,
+    reset_loop: bool = False,
 ) -> ConversationState:
     state = state or await get_or_create_state(session, conversation_id)
     effective_selected = selected_product
@@ -132,6 +136,14 @@ async def update_state(
         state.selected_product = selected_product
     if last_user_message_id is not None:
         state.last_user_message_id = last_user_message_id
+    if last_handler_used is not None:
+        state.last_handler_used = last_handler_used
+    if reset_loop:
+        state.loop_counter = 0
+    elif increment_loop:
+        state.loop_counter = (state.loop_counter or 0) + 1
+    elif loop_counter is not None:
+        state.loop_counter = loop_counter
     state.updated_at = utc_now()
     await session.commit()
     return state
@@ -142,6 +154,8 @@ async def record_bot_action(
     conversation_id: int,
     intent: str,
     answer: str | None,
+    *,
+    handler_used: str | None = None,
 ) -> None:
     state = await get_or_create_state(session, conversation_id)
     state.last_bot_action = intent
@@ -153,6 +167,8 @@ async def record_bot_action(
     if answer:
         answers[intent] = answer[:800]
     state.last_bot_answer_by_intent = answers
+    if handler_used is not None:
+        state.last_handler_used = handler_used
     state.updated_at = utc_now()
     await session.commit()
 
@@ -174,6 +190,8 @@ def build_state_payload(state: ConversationState | None) -> dict[str, Any] | Non
         "last_user_message_id": state.last_user_message_id,
         "last_bot_action": state.last_bot_action,
         "last_bot_answer_by_intent": state.last_bot_answer_by_intent,
+        "last_handler_used": state.last_handler_used,
+        "loop_counter": state.loop_counter,
         "updated_at": state.updated_at.isoformat() if isinstance(state.updated_at, datetime) else None,
         "last_updated_at": state.updated_at.isoformat() if isinstance(state.updated_at, datetime) else None,
     }

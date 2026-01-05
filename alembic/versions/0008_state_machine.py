@@ -17,13 +17,13 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column(
-        "conversation_states",
-        sa.Column("selected_product", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+    op.execute(
+        "ALTER TABLE conversation_states "
+        "ADD COLUMN IF NOT EXISTS selected_product JSONB"
     )
-    op.add_column(
-        "conversation_states",
-        sa.Column("last_user_message_id", sa.Integer(), nullable=True),
+    op.execute(
+        "ALTER TABLE conversation_states "
+        "ADD COLUMN IF NOT EXISTS last_user_message_id INTEGER"
     )
 
 

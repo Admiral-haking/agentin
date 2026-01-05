@@ -160,6 +160,11 @@ def get_branches_text() -> str:
     )
 
 
+def get_category_links() -> list[dict[str, str]]:
+    category_links = STORE_KNOWLEDGE.get("category_links", [])
+    return [item for item in category_links if item.get("url")]
+
+
 def get_hours_text() -> str:
     return f"ساعت کاری همه‌روزه: {STORE_KNOWLEDGE['map_listing']['hours']}"
 
@@ -168,19 +173,20 @@ def get_phone_text() -> str:
     return f"شماره تماس: {STORE_KNOWLEDGE['map_listing']['phone']}"
 
 
-def get_contact_text() -> str:
+def get_contact_text(include_website: bool = False) -> str:
     socials = STORE_KNOWLEDGE.get("socials", {})
     parts = [
         f"شماره تماس: {STORE_KNOWLEDGE['map_listing']['phone']}",
         f"واتساپ: {socials.get('whatsapp')}" if socials.get("whatsapp") else "",
         f"اینستاگرام: {socials.get('instagram')}" if socials.get("instagram") else "",
         f"تلگرام: {socials.get('telegram')}" if socials.get("telegram") else "",
-        f"وب‌سایت: https://{STORE_KNOWLEDGE['website']}",
     ]
+    if include_website:
+        parts.append(f"وب‌سایت: https://{STORE_KNOWLEDGE['website']}")
     return "\n".join(part for part in parts if part)
 
 
-def get_contact_links() -> list[dict[str, str]]:
+def get_contact_links(include_website: bool = False) -> list[dict[str, str]]:
     socials = STORE_KNOWLEDGE.get("socials", {})
     phone = STORE_KNOWLEDGE["map_listing"].get("phone")
     links = [
@@ -189,8 +195,9 @@ def get_contact_links() -> list[dict[str, str]]:
         {"title": "اینستاگرام", "url": socials.get("instagram", "")},
         {"title": "اینستاگرام دوم", "url": socials.get("instagram2", "")},
         {"title": "تلگرام", "url": socials.get("telegram", "")},
-        {"title": "وب‌سایت", "url": f"https://{STORE_KNOWLEDGE['website']}"},
     ]
+    if include_website:
+        links.append({"title": "وب‌سایت", "url": f"https://{STORE_KNOWLEDGE['website']}"})
     return [item for item in links if item.get("url")]
 
 
