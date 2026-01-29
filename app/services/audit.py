@@ -28,7 +28,10 @@ def _serialize(value: object) -> object:
         return _serialize(value.model_dump(mode="json"))
     try:
         mapper = inspect(value)
-        payload = {attr.key: getattr(value, attr.key) for attr in mapper.mapper.column_attrs}
+        payload = {
+            attr.key: getattr(value, attr.key)
+            for attr in mapper.mapper.column_attrs
+        }
         return _serialize(payload)
     except Exception:
         pass
@@ -57,7 +60,10 @@ def _to_dict(value: object | None) -> dict | None:
         return _serialize(value.model_dump(mode="json"))
     try:
         mapper = inspect(value)
-        payload = {attr.key: getattr(value, attr.key) for attr in mapper.mapper.column_attrs}
+        payload = {
+            attr.key: getattr(value, attr.key)
+            for attr in mapper.mapper.column_attrs
+        }
         return _serialize(payload)
     except Exception:
         if hasattr(value, "__dict__"):

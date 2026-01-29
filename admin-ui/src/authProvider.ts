@@ -60,8 +60,12 @@ const authProvider: AuthProvider = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
     });
-    if (!response.ok) throw new Error('Invalid credentials');
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const detail = typeof data?.detail === 'string' ? data.detail : '';
+      const message = detail?.trim() || 'نام کاربری یا رمز عبور اشتباه است.';
+      throw new Error(message);
+    }
     setTokens(data.access_token, data.refresh_token);
   },
   logout: async () => {

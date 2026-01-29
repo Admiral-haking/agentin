@@ -22,6 +22,7 @@ import { Link } from 'react-router-dom';
 import { Title } from 'react-admin';
 import { fetchWithAuth } from '../authProvider';
 import { fetchJson, getErrorMessage, parseResponse } from '../utils/api';
+import { InlineAlert } from '../components/InlineAlert';
 
 const DEFAULT_API_URL = import.meta.env.DEV
   ? 'http://localhost:8000'
@@ -496,13 +497,7 @@ export const AssistantPage = () => {
               <div ref={bottomRef} />
             </Box>
             {loading && <LinearProgress />}
-            {error && (
-              <Paper variant="outlined" sx={{ p: 1.5, borderColor: 'error.light' }}>
-                <Typography variant="body2" color="error">
-                  {error}
-                </Typography>
-              </Paper>
-            )}
+            {error && <InlineAlert title="خطای دستیار" message={error} />}
             {actionSuggestion && (
               <Paper variant="outlined" sx={{ p: 1.5, borderStyle: 'dashed' }}>
                 <Stack spacing={1}>

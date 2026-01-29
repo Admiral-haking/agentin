@@ -32,6 +32,7 @@ from app.services.guardrails import (
     build_branches_plan,
     build_contact_plan,
     build_decline_response,
+    build_greeting_response,
     build_goodbye_response,
     build_hours_response,
     build_phone_response,
@@ -40,11 +41,13 @@ from app.services.guardrails import (
     build_thanks_response,
     build_trust_response,
     build_website_plan,
+    format_outbound_text,
     fallback_for_message_type,
     fallback_llm_text,
     is_decline,
     is_goodbye,
     is_greeting,
+    is_negative_feedback,
     is_purchase_confirmation,
     is_thanks,
     needs_product_details,
@@ -52,6 +55,7 @@ from app.services.guardrails import (
     post_process,
     validate_reply_or_rewrite,
     wants_product_intent,
+    wants_product_address,
     wants_product_link,
     wants_address,
     wants_hours,
@@ -72,6 +76,11 @@ from app.services.order_flow import handle_order_flow
 from app.services.product_matcher import (
     match_products_with_scores,
     tokenize_query,
+)
+from app.services.admin_media_notes import (
+    create_admin_media_note,
+    format_admin_media_notes,
+    get_recent_admin_media_notes,
 )
 from app.services.product_catalog import get_catalog_snapshot
 from app.services.behavior_analyzer import (
@@ -140,6 +149,15 @@ FOLLOWUP_PATTERNS = {
     "availability_check",
     "comparison_request",
 }
+BOOT_KEYWORDS = {
+    "بوت",
+    "چکمه",
+    "نیم بوت",
+    "نیم‌بوت",
+    "نیم‌ بوت",
+    "boot",
+    "boots",
+}
 
 
 def _extract_product_slug(text: str | None) -> str | None:
@@ -162,6 +180,27 @@ def _extract_product_slug(text: str | None) -> str | None:
         if slug:
             return slug
     return None
+
+
+def _is_boot_request(text: str | None) -> bool:
+    if not text:
+        return False
+    normalized = text.replace("\u200c", " ").lower()
+    return any(keyword in normalized for keyword in BOOT_KEYWORDS)
+
+
+def _is_boot_product(product: Product) -> bool:
+    haystack = " ".join(
+        part
+        for part in [
+            product.slug,
+            product.title,
+            product.description,
+            product.product_id,
+        ]
+        if part
+    ).lower()
+    return any(keyword in haystack for keyword in BOOT_KEYWORDS)
 
 
 def _plan_to_text(plan: OutboundPlan) -> str:
@@ -949,6 +988,31 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             )
             await session.commit()
 
+            if normalized.is_admin:
+                note_url = normalized.media_url or normalized.audio_url
+                if note_url:
+                    tag = normalized.text.strip() if normalized.text else None
+                    if tag:
+                        tag = tag[:64]
+                    await create_admin_media_note(
+                        session,
+                        conversation_id=conversation.id,
+                        message_id=record.id,
+                        media_url=note_url,
+                        tag=tag,
+                    )
+                    await log_event(
+                        session,
+                        level="info",
+                        event_type="admin_media_ingested",
+                        data={
+                            "conversation_id": conversation.id,
+                            "message_id": record.id,
+                            "media_url": note_url,
+                        },
+                    )
+                    await session.commit()
+
             if role == "user" and normalized.message_type != "read":
                 await cancel_followups_for_conversation(
                     session, conversation.id, reason="user_activity"
@@ -1336,6 +1400,80 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         },
                     )
                     return
+
+            if is_negative_feedback(lowered):
+                loop_payload = await _touch_state(
+                    state.intent or "unknown",
+                    category=state.category or infer_state_category(query_text),
+                    required_slots=state.slots_required,
+                    filled_slots=state.slots_filled,
+                    selected_product=selected_product_state,
+                    preserve_selected_product=True,
+                    last_handler_used="loop_breaker",
+                    increment_loop=True,
+                )
+                loop_count = 0
+                if isinstance(loop_payload, dict):
+                    loop_count = int(loop_payload.get("loop_counter") or 0)
+                await log_event(
+                    session,
+                    level="info",
+                    event_type="loop_detected",
+                    data={
+                        "conversation_id": conversation.id,
+                        "user_id": user.id,
+                        "reason": "negative_feedback",
+                        "loop_counter": loop_count,
+                    },
+                    commit=False,
+                )
+                await session.commit()
+                if router_intent == "store_info":
+                    reply_text = (
+                        "حق با شماست، اشتباه شد. "
+                        "منظورتون لینک دسته‌بندی محصولات تو سایت هست یا آدرس شعبه‌ها؟"
+                    )
+                elif support_intent:
+                    reply_text = build_angry_response()
+                else:
+                    reply_text = (
+                        "حق با شماست، اشتباه شد 😔 "
+                        "اسم دقیق مدل یا یه عکس از محصول رو بفرستید تا لینک درستش رو بدم."
+                    )
+                await send_plan_and_store(
+                    session,
+                    conversation.id,
+                    normalized.sender_id,
+                    OutboundPlan(type="text", text=reply_text),
+                    meta=_merge_meta({
+                        "source": "guardrails",
+                        "intent": "loop_breaker",
+                        "handler": "loop_breaker",
+                        "loop_counter": loop_count,
+                    }),
+                )
+                return
+
+            token_count = len(lowered.split()) if lowered else 0
+            if is_greeting(lowered) and token_count <= 3 and router_intent in {"smalltalk", "unknown"}:
+                conversation_state_payload = await _touch_state(
+                    "unknown",
+                    category=state.category or infer_state_category(query_text),
+                    last_handler_used="greeting",
+                    reset_loop=True,
+                )
+                await send_plan_and_store(
+                    session,
+                    conversation.id,
+                    normalized.sender_id,
+                    OutboundPlan(type="text", text=build_greeting_response()),
+                    meta=_merge_meta({
+                        "source": "guardrails",
+                        "intent": "greeting",
+                        "handler": "greeting",
+                    }),
+                )
+                return
 
             link_request = wants_product_link(intent_text)
             purchase_confirm = is_purchase_confirmation(intent_text)
@@ -2923,6 +3061,10 @@ def build_llm_messages(
                 parts.append(f"سبک: {', '.join(product_tags.styles)}")
             if product_tags.colors:
                 parts.append(f"رنگ: {', '.join(product_tags.colors[:3])}")
+            if product.description:
+                description = " ".join(product.description.split())
+                if description:
+                    parts.append(f"توضیحات: {description[:200]}")
             if product.page_url:
                 parts.append(f"لینک: {product.page_url}")
             product_lines.append(" | ".join(parts))

@@ -43,6 +43,7 @@
   --ink-700: #2a2f3a;
   --surface-0: #f3f1eb;
   --surface-1: #ffffff;
+  --surface-2: #f8f6f0;
   --accent-500: #0f8b8d;
   --accent-300: #5bc6c2;
   --accent-warm: #ff8a5b;
@@ -57,12 +58,12 @@ body {
   margin: 0;
   font-family: "Vazirmatn", "IBM Plex Sans", sans-serif;
   color: var(--ink-900);
-  background-color: var(--surface-0);
+  background-color: #f2f0ea;
   background-image:
-    radial-gradient(1100px 520px at 12% -10%, rgba(15, 139, 141, 0.18), transparent 60%),
-    radial-gradient(900px 420px at 96% 0%, rgba(255, 138, 91, 0.16), transparent 55%),
-    repeating-linear-gradient(90deg, rgba(15, 139, 141, 0.06) 0, rgba(15, 139, 141, 0.06) 1px, transparent 1px, transparent 28px),
-    repeating-linear-gradient(180deg, rgba(15, 139, 141, 0.05) 0, rgba(15, 139, 141, 0.05) 1px, transparent 1px, transparent 28px);
+    radial-gradient(1200px 520px at 10% -10%, rgba(15, 139, 141, 0.16), transparent 60%),
+    radial-gradient(800px 420px at 98% 0%, rgba(242, 143, 84, 0.18), transparent 55%),
+    repeating-linear-gradient(90deg, rgba(15, 139, 141, 0.05) 0, rgba(15, 139, 141, 0.05) 1px, transparent 1px, transparent 32px),
+    repeating-linear-gradient(180deg, rgba(15, 139, 141, 0.04) 0, rgba(15, 139, 141, 0.04) 1px, transparent 1px, transparent 32px);
   min-height: 100vh;
   line-height: 1.7;
   text-rendering: optimizeLegibility;
@@ -100,6 +101,23 @@ code {
 
 .RaLayout-content {
   animation: page-in 280ms ease-out;
+  padding: 24px;
+}
+
+@media (max-width: 600px) {
+  .RaLayout-content {
+    padding: 16px;
+  }
+}
+
+.RaDatagrid-root {
+  border-radius: 18px;
+  overflow: hidden;
+  border: 1px solid rgba(18, 22, 33, 0.08);
+}
+
+.RaDatagrid-root thead tr th {
+  background-image: linear-gradient(180deg, rgba(15, 139, 141, 0.12) 0%, rgba(15, 139, 141, 0.05) 100%);
 }
 
 .RaDatagrid-root tbody tr {

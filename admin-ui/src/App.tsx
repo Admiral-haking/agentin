@@ -33,6 +33,7 @@ import { DirectamConsole } from './pages/DirectamConsole';
 import { HealthPage } from './pages/HealthPage';
 import { UserBehaviorPage } from './pages/UserBehaviorPage';
 import { AiContextPage } from './pages/AiContextPage';
+import { LoginPage } from './pages/LoginPage';
 
 const productsEnabled = (import.meta.env.VITE_PRODUCTS_ENABLED || 'false') === 'true';
 
@@ -44,6 +45,7 @@ export const App = () => (
     layout={AppLayout}
     dashboard={Dashboard}
     theme={appTheme}
+    loginPage={LoginPage}
   >
     {permissions => (
       <>

@@ -11,7 +11,7 @@ const API_URL = import.meta.env.VITE_API_URL || DEFAULT_API_URL;
 const parseApiResponse = async (response: Response) => {
   const data = await parseResponse(response);
   if (!response.ok) {
-    const message = getErrorMessage(data, 'Request failed');
+    const message = getErrorMessage(data, 'ارتباط با سرور ناموفق بود.');
     const fieldErrors = normalizeFieldErrors(data);
     const body = fieldErrors ?? data ?? {};
     throw new HttpError(message, response.status, body);

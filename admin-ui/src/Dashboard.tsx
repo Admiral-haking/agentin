@@ -14,6 +14,7 @@ import { Link } from 'react-router-dom';
 import { useDataProvider, usePermissions } from 'react-admin';
 import { useEffect, useState } from 'react';
 import { fetchJson } from './utils/api';
+import { InlineAlert } from './components/InlineAlert';
 
 const productsEnabled = (import.meta.env.VITE_PRODUCTS_ENABLED || 'false') === 'true';
 const DEFAULT_API_URL = import.meta.env.DEV
@@ -110,9 +111,7 @@ export const Dashboard = () => {
                   <Chip label="گزارش" size="small" color="primary" />
                 </Stack>
                 {analyticsError && (
-                  <Typography variant="body2" color="error">
-                    {analyticsError}
-                  </Typography>
+                  <InlineAlert title="خطای گزارش تحلیلی" message={analyticsError} />
                 )}
                 {analytics ? (
                   <Stack spacing={2}>
@@ -390,9 +389,7 @@ export const Dashboard = () => {
                     </Typography>
                   )}
                   {syncError && (
-                    <Typography variant="body2" color="error">
-                      {syncError}
-                    </Typography>
+                    <InlineAlert title="خطای همگام‌سازی" message={syncError} />
                   )}
                   <Stack direction="row" spacing={1}>
                     <Button

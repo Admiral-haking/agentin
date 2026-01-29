@@ -6,36 +6,43 @@ export const appTheme = createTheme({
     mode: 'light',
     primary: {
       main: '#0f8b8d',
-      dark: '#0a6e70',
+      dark: '#0b6f71',
       light: '#5bc6c2',
       contrastText: '#ffffff',
     },
     secondary: {
-      main: '#ff8a5b',
-      dark: '#e16f45',
-      light: '#ffb595',
-      contrastText: '#1a1a1a',
+      main: '#f28f54',
+      dark: '#d87941',
+      light: '#f6b485',
+      contrastText: '#1f1f1f',
     },
     background: {
-      default: '#f3f1eb',
+      default: '#f2f0ea',
       paper: '#ffffff',
     },
     text: {
-      primary: '#121621',
-      secondary: '#3a3f4f',
+      primary: '#151823',
+      secondary: '#3a4153',
     },
+    divider: 'rgba(18, 22, 33, 0.08)',
+    success: { main: '#2f9f86' },
+    warning: { main: '#f0a34a' },
+    error: { main: '#d14c4c' },
+    info: { main: '#3d6fab' },
   },
   shape: {
-    borderRadius: 14,
+    borderRadius: 16,
   },
   typography: {
     fontFamily: '"Vazirmatn", "IBM Plex Sans", sans-serif',
-    h1: { fontFamily: '"Vazirmatn", "Space Grotesk", sans-serif', fontWeight: 700 },
-    h2: { fontFamily: '"Vazirmatn", "Space Grotesk", sans-serif', fontWeight: 700 },
-    h3: { fontFamily: '"Vazirmatn", "Space Grotesk", sans-serif', fontWeight: 700 },
-    h4: { fontFamily: '"Vazirmatn", "Space Grotesk", sans-serif', fontWeight: 700 },
-    h5: { fontFamily: '"Vazirmatn", "Space Grotesk", sans-serif', fontWeight: 700 },
-    h6: { fontFamily: '"Vazirmatn", "Space Grotesk", sans-serif', fontWeight: 700 },
+    h1: { fontWeight: 700, letterSpacing: '-0.02em' },
+    h2: { fontWeight: 700, letterSpacing: '-0.02em' },
+    h3: { fontWeight: 700, letterSpacing: '-0.02em' },
+    h4: { fontWeight: 700, letterSpacing: '-0.015em' },
+    h5: { fontWeight: 700, letterSpacing: '-0.01em' },
+    h6: { fontWeight: 700 },
+    subtitle1: { fontWeight: 600 },
+    subtitle2: { fontWeight: 600 },
     body1: { lineHeight: 1.8 },
     body2: { lineHeight: 1.7 },
   },
@@ -43,16 +50,16 @@ export const appTheme = createTheme({
     MuiAppBar: {
       styleOverrides: {
         root: {
-          backgroundImage: 'linear-gradient(135deg, #0f8b8d 0%, #1f4fd1 100%)',
+          backgroundImage: 'linear-gradient(135deg, #0f8b8d 0%, #1b3f7a 100%)',
           color: '#fff',
-          boxShadow: '0 10px 30px rgba(15, 139, 141, 0.25)',
+          boxShadow: '0 12px 32px rgba(15, 139, 141, 0.3)',
         },
       },
     },
     MuiDrawer: {
       styleOverrides: {
         paper: {
-          backgroundImage: 'linear-gradient(180deg, #f9f8f2 0%, #ffffff 100%)',
+          backgroundImage: 'linear-gradient(180deg, #fbfaf5 0%, #ffffff 100%)',
           borderRight: '1px solid rgba(18, 22, 33, 0.08)',
         },
       },
@@ -62,7 +69,22 @@ export const appTheme = createTheme({
         root: {
           backgroundImage: 'linear-gradient(180deg, rgba(255,255,255,0.95) 0%, #ffffff 100%)',
           border: '1px solid rgba(18, 22, 33, 0.08)',
-          boxShadow: '0 18px 40px rgba(18, 22, 33, 0.08)',
+          boxShadow: '0 18px 42px rgba(18, 22, 33, 0.08)',
+        },
+      },
+    },
+    MuiCard: {
+      styleOverrides: {
+        root: {
+          borderRadius: 18,
+          boxShadow: '0 22px 45px rgba(18, 22, 33, 0.08)',
+        },
+      },
+    },
+    MuiCardContent: {
+      styleOverrides: {
+        root: {
+          padding: '20px 24px',
         },
       },
     },
@@ -72,6 +94,9 @@ export const appTheme = createTheme({
           textTransform: 'none',
           fontWeight: 600,
           borderRadius: 12,
+        },
+        contained: {
+          boxShadow: '0 12px 26px rgba(15, 139, 141, 0.22)',
         },
       },
     },
@@ -142,10 +167,36 @@ export const appTheme = createTheme({
         },
       },
     },
+    MuiTableRow: {
+      styleOverrides: {
+        root: {
+          transition: 'background-color 150ms ease',
+          '&:hover': {
+            backgroundColor: 'rgba(15, 139, 141, 0.06)',
+          },
+        },
+      },
+    },
     MuiChip: {
       styleOverrides: {
         root: {
           fontWeight: 600,
+        },
+      },
+    },
+    MuiAlert: {
+      styleOverrides: {
+        root: {
+          borderRadius: 12,
+          alignItems: 'center',
+        },
+      },
+    },
+    MuiLinearProgress: {
+      styleOverrides: {
+        root: {
+          height: 8,
+          borderRadius: 999,
         },
       },
     },

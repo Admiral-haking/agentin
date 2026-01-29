@@ -11,6 +11,7 @@ import {
 } from '@mui/material';
 import { Title } from 'react-admin';
 import { fetchJson } from '../utils/api';
+import { InlineAlert } from '../components/InlineAlert';
 
 const DEFAULT_API_URL = import.meta.env.DEV
   ? 'http://localhost:8000'
@@ -263,7 +264,7 @@ export const AiContextPage = () => {
       {error && (
         <Card sx={{ mb: 2 }}>
           <CardContent>
-            <Typography color="error">{error}</Typography>
+            <InlineAlert title="خطای دریافت کانتکست" message={error} />
           </CardContent>
         </Card>
       )}
