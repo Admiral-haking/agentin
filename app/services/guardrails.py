@@ -35,6 +35,10 @@ MARKDOWN_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 LIST_PREFIX_RE = re.compile(r"^\s*([-*•]|\d+[.)])\s+", re.MULTILINE)
 MULTISPACE_RE = re.compile(r"[ \t]{2,}")
 PUNCT_SPACE_RE = re.compile(r"\s+([،؛:!؟.,])")
+SPACE_AFTER_PUNCT_RE = re.compile(r"([،؛:!؟.,])(?!\s|$)")
+JOINED_WORD_RE = re.compile(
+    r"([\u0600-\u06FF])(?=(چطور|چجوری|آیا|می‌?تونم|می‌?تونی|می‌?شه))"
+)
 PERSIAN_LETTER_RE = re.compile(r"[\u0600-\u06FF]")
 LATIN_LETTER_RE = re.compile(r"[A-Za-z]")
 EMOJI_RE = re.compile(r"[\U0001F300-\U0001FAFF]")
@@ -50,6 +54,7 @@ GREETING_KEYWORDS = {
 }
 ADDRESS_KEYWORDS = {
     "آدرس",
+    "ادرس",
     "شعبه",
     "شعبات",
     "لوکیشن",
@@ -59,6 +64,15 @@ ADDRESS_KEYWORDS = {
     "نشان",
     "نقشه",
     "نشانی",
+}
+PRODUCT_ADDRESS_KEYWORDS = {
+    "محصول",
+    "محصولات",
+    "کالا",
+    "کالاه",
+    "دسته",
+    "دسته بندی",
+    "دسته‌بندی",
 }
 HOURS_KEYWORDS = {
     "ساعت کاری",
@@ -150,6 +164,11 @@ PRODUCT_INTENT_KEYWORDS = {
     "کالکشن",
     "مدل ها",
     "مدل‌ها",
+    "چکمه",
+    "بوت",
+    "نیم بوت",
+    "نیم‌بوت",
+    "نیم‌ بوت",
     "کفش",
     "صندل",
     "دمپایی",
@@ -190,6 +209,17 @@ ANGRY_KEYWORDS = {
     "مشکل دارم",
     "نمیاد",
     "نیومد",
+}
+NEGATIVE_FEEDBACK_KEYWORDS = {
+    "اشتباه",
+    "نامربوط",
+    "درست نیست",
+    "غلطه",
+    "داری اشتباه میفرستی",
+    "داری اشتباه میفرستی",
+    "داره اشتباه میده",
+    "جواب اشتباه",
+    "جواب نامربوط",
 }
 THANKS_KEYWORDS = {
     "ممنون",
@@ -255,6 +285,9 @@ LINK_KEYWORDS = {
     "لینک خرید",
     "لینک پرداخت",
     "لینک مستقیم",
+    "صفحه محصول",
+    "صفحه خرید",
+    "پرداخت تو سایت",
     "لینکش",
     "لینک",
     "آدرس محصول",
@@ -381,11 +414,21 @@ def _normalize_text(text: str | None) -> str:
 
 def _sanitize_text(text: str) -> str:
     cleaned = MARKDOWN_LINK_RE.sub(r"\1: \2", text)
+    urls = _extract_urls(cleaned)
+    placeholders: dict[str, str] = {}
+    for idx, url in enumerate(urls):
+        token = f"__URL{idx}__"
+        placeholders[token] = url
+        cleaned = cleaned.replace(url, token)
     cleaned = cleaned.replace("**", "").replace("__", "").replace("`", "")
     cleaned = LIST_PREFIX_RE.sub("", cleaned)
     cleaned = PUNCT_SPACE_RE.sub(r"\1", cleaned)
+    cleaned = SPACE_AFTER_PUNCT_RE.sub(r"\1 ", cleaned)
+    cleaned = JOINED_WORD_RE.sub(r"\1 ", cleaned)
     cleaned = MULTISPACE_RE.sub(" ", cleaned)
     cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    for token, url in placeholders.items():
+        cleaned = cleaned.replace(token, url)
     return cleaned.strip()
 
 
@@ -423,11 +466,23 @@ def _is_root_link(url: str) -> bool:
 def _should_force_persian(reply_text: str, user_text: str | None) -> bool:
     if not reply_text:
         return False
+    if _is_url_only(reply_text):
+        return False
     if PERSIAN_LETTER_RE.search(reply_text):
         return False
     if not LATIN_LETTER_RE.search(reply_text):
         return False
     return bool(PERSIAN_LETTER_RE.search(user_text or ""))
+
+
+def _is_url_only(text: str) -> bool:
+    urls = _extract_urls(text)
+    if not urls:
+        return False
+    stripped = text
+    for url in urls:
+        stripped = stripped.replace(url, "")
+    return not stripped.strip()
 
 
 def _contains_any(text: str, keywords: set[str]) -> bool:
@@ -498,10 +553,49 @@ def wants_repeat(text: str) -> bool:
 def wants_product_link(text: str) -> bool:
     if not text:
         return False
+    if wants_product_address(text):
+        return False
     if wants_website(text):
         return False
     normalized = _normalize_text(text)
     return any(keyword in normalized for keyword in LINK_KEYWORDS)
+
+
+def wants_product_address(text: str) -> bool:
+    normalized = _normalize_text(text)
+    if not normalized:
+        return False
+    if not _contains_any(normalized, ADDRESS_KEYWORDS):
+        return False
+    return _contains_any(normalized, PRODUCT_ADDRESS_KEYWORDS)
+
+
+def is_negative_feedback(text: str) -> bool:
+    return _contains_any(text, NEGATIVE_FEEDBACK_KEYWORDS)
+
+
+def format_outbound_text(text: str | None) -> str:
+    if not text:
+        return ""
+    cleaned = text.strip()
+    cleaned = cleaned.replace("\u200c", " ")
+    cleaned = MARKDOWN_LINK_RE.sub(r"\1: \2", cleaned)
+    urls = _extract_urls(cleaned)
+    placeholders: dict[str, str] = {}
+    for idx, url in enumerate(urls):
+        token = f"__URL{idx}__"
+        placeholders[token] = url
+        cleaned = cleaned.replace(url, token)
+    cleaned = LIST_PREFIX_RE.sub("", cleaned)
+    cleaned = PUNCT_SPACE_RE.sub(r"\1", cleaned)
+    cleaned = SPACE_AFTER_PUNCT_RE.sub(r"\1 ", cleaned)
+    cleaned = JOINED_WORD_RE.sub(r"\1 ", cleaned)
+    cleaned = MULTISPACE_RE.sub(" ", cleaned)
+    cleaned = re.sub(r"\s+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    for token, url in placeholders.items():
+        cleaned = cleaned.replace(token, url)
+    return cleaned.strip()
 
 
 def is_purchase_confirmation(text: str | None) -> bool:
@@ -616,6 +710,10 @@ def build_product_details_question() -> str:
     )
 
 
+def build_greeting_response() -> str:
+    return "سلام عزیزم 😊 خوش اومدی به قلب دوم. دنبال چی هستی؟"
+
+
 def build_angry_response() -> str:
     return (
         "متأسفم بابت مشکلی که پیش اومده 🙏 لطفاً شماره سفارش و یک اسکرین‌شات ارسال کنید تا سریع پیگیری کنیم."
@@ -651,10 +749,10 @@ def build_rule_based_plan(
         return OutboundPlan(type="text", text=fallback_for_message_type("text"))
 
     if is_first_message and is_greeting(normalized):
-        return build_quick_reply_plan()
+        return OutboundPlan(type="text", text=build_greeting_response())
 
     if is_greeting(normalized) and token_count <= 2:
-        return OutboundPlan(type="text", text="سلام! چطور می‌تونم کمکتون کنم؟")
+        return OutboundPlan(type="text", text=build_greeting_response())
 
     if is_thanks(normalized) and token_count <= 4:
         return OutboundPlan(type="text", text=build_thanks_response())
@@ -842,7 +940,7 @@ def validate_reply_or_rewrite(
         if isinstance(selected_product, dict):
             page_url = selected_product.get("page_url") or selected_product.get("url")
         if isinstance(page_url, str) and page_url.strip():
-            reply = f"حتماً 🙂 لینک مستقیم محصول: {page_url.strip()}"
+            reply = page_url.strip()
             return OutboundPlan(type="text", text=reply), ["link_request_handled"]
         reply = "برای ارسال لینک، لطفاً اسم دقیق مدل یا یک عکس/لینک از محصول بفرستید."
         return OutboundPlan(type="text", text=reply), ["link_request_missing"]

@@ -17,6 +17,7 @@ from app.services.guardrails import (
     wants_hours,
     wants_phone,
     wants_product_intent,
+    wants_product_address,
     wants_product_link,
     wants_trust,
     wants_website,
@@ -30,6 +31,7 @@ _INTENT_PRICE = "price_availability"
 _INTENT_ORDER = "order_intent"
 _INTENT_COMPLAINT = "complaint_support"
 _INTENT_CAMPAIGN = "campaign_discount"
+_INTENT_AMBIGUOUS_STORE_PRODUCTS = "ambiguous_store_vs_products"
 _INTENT_SMALLTALK = "smalltalk"
 _INTENT_UNKNOWN = "unknown"
 
@@ -87,6 +89,16 @@ def route_intent(text: str | None) -> RouterDecision:
     message = (text or "").strip()
     lowered = message.lower()
     evidence: list[str] = []
+
+    if wants_product_address(message):
+        evidence.extend(_collect_hits(lowered, ["آدرس", "محصول", "محصولات", "کالا"]))
+        return RouterDecision(
+            intent=_INTENT_AMBIGUOUS_STORE_PRODUCTS,
+            category="unknown",
+            confidence=0.92,
+            evidence_keywords=tuple(evidence),
+            risk_level="HIGH",
+        )
 
     if wants_product_link(message):
         evidence.extend(_collect_hits(lowered, ["لینک", "پرداخت", "صفحه"]))

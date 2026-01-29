@@ -1,5 +1,6 @@
 from app.models.admin_refresh_token import AdminRefreshToken
 from app.models.admin_user import AdminUser
+from app.models.admin_media_note import AdminMediaNote
 from app.models.assistant import AssistantAction, AssistantConversation, AssistantMessage
 from app.models.app_log import AppLog
 from app.models.audit_log import AuditLog
@@ -22,6 +23,7 @@ from app.models.user_behavior_profile import UserBehaviorProfile
 __all__ = [
     "AdminRefreshToken",
     "AdminUser",
+    "AdminMediaNote",
     "AssistantAction",
     "AssistantConversation",
     "AssistantMessage",
