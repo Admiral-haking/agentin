@@ -65,9 +65,26 @@ const formatTime = (value?: string | null) => {
 
 const extractActionSuggestion = (text: string): AssistantActionSuggestion | null => {
   const match = text.match(/```json\s*([\s\S]*?)```/i);
-  if (!match) return null;
+  if (match) {
+    try {
+      const parsed = JSON.parse(match[1]);
+      if (!parsed?.action_type) return null;
+      return {
+        action_type: String(parsed.action_type),
+        summary: parsed.summary ? String(parsed.summary) : undefined,
+        payload: parsed.payload && typeof parsed.payload === 'object' ? parsed.payload : undefined,
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace === -1 || lastBrace <= firstBrace) return null;
+  const candidate = text.slice(firstBrace, lastBrace + 1);
   try {
-    const parsed = JSON.parse(match[1]);
+    const parsed = JSON.parse(candidate);
     if (!parsed?.action_type) return null;
     return {
       action_type: String(parsed.action_type),
@@ -274,6 +291,10 @@ export const AssistantPage = () => {
     setError(null);
 
     try {
+      const historyMessages = messages
+        .filter(msg => msg.role === 'user' || msg.role === 'assistant')
+        .map(msg => ({ role: msg.role, content: msg.content }));
+      const requestMessages = [...historyMessages, { role: 'user', content: trimmed }];
       const data = await fetchJson(
         `${API_URL}/admin/assistant/chat`,
         {
@@ -284,7 +305,7 @@ export const AssistantPage = () => {
             title: title.trim() || undefined,
             context: context.trim() || undefined,
             mode,
-            messages: [{ role: 'user', content: trimmed }],
+            messages: requestMessages,
           }),
         },
         'Unable to reach the assistant.'

@@ -1380,12 +1380,24 @@ async def chat_with_assistant(
             {"role": "system", "content": _build_product_context(matched_products)}
         )
 
-    for item in history_items:
-        if item.role not in {"user", "assistant"}:
-            continue
-        llm_messages.append({"role": item.role, "content": item.content})
-
-    llm_messages.append({"role": "user", "content": last_user_text})
+    payload_history = [
+        {"role": msg["role"], "content": msg["content"]}
+        for msg in cleaned
+        if msg["role"] in {"user", "assistant"}
+    ]
+    db_history = [
+        {"role": item.role, "content": item.content}
+        for item in history_items
+        if item.role in {"user", "assistant"}
+    ]
+    use_payload_history = bool(payload_history) and (
+        not db_history or len(payload_history) > len(db_history)
+    )
+    history_source = payload_history if use_payload_history else db_history
+    for item in history_source:
+        llm_messages.append({"role": item["role"], "content": item["content"]})
+    if not use_payload_history:
+        llm_messages.append({"role": "user", "content": last_user_text})
 
     normalized = NormalizedMessage(
         sender_id=str(admin.id),
