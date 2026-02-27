@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -20,16 +20,37 @@ from app.services.processor import handle_webhook
 from app.utils.security import verify_signature
 
 app = FastAPI(title="Instagram DM Bot")
+REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
+MAX_MEDIA_PROXY_REDIRECTS = 5
+
+
+def _allowed_media_hosts() -> set[str]:
+    return {
+        host.strip().lower()
+        for host in settings.MEDIA_PROXY_ALLOWED_HOSTS.split(",")
+        if host.strip()
+    }
+
+
+def _validate_media_proxy_url(url: str, allowed_hosts: set[str]) -> None:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        raise HTTPException(status_code=400, detail="Invalid URL scheme")
+    hostname = parsed.hostname.lower() if parsed.hostname else ""
+    if not hostname:
+        raise HTTPException(status_code=400, detail="Invalid URL host")
+    host_allowed = any(
+        hostname == allowed or hostname.endswith(f".{allowed}")
+        for allowed in allowed_hosts
+    )
+    if not host_allowed:
+        raise HTTPException(status_code=400, detail="Host not allowed")
 
 @app.exception_handler(InvalidApiTokenError)
 async def invalid_api_token_handler(
     request: Request, exc: InvalidApiTokenError
 ) -> JSONResponse:
-    token = exc.api_token
-    return JSONResponse(
-        status_code=401,
-        content={"error": f"Invalid API token: '{token}'", "api_token": token},
-    )
+    return JSONResponse(status_code=401, content={"error": "Invalid API token"})
 
 origins = [origin.strip() for origin in settings.ADMIN_UI_ORIGINS.split(",") if origin]
 if origins:
@@ -44,6 +65,8 @@ if origins:
 @app.on_event("startup")
 async def on_startup() -> None:
     setup_logging()
+    if settings.APP_ENV.lower() != "development" and settings.JWT_SECRET_KEY == "change-me":
+        raise RuntimeError("JWT_SECRET_KEY must be set in non-development environments")
     await init_db()
     app.state.followup_stop = asyncio.Event()
     app.state.followup_task = asyncio.create_task(
@@ -90,51 +113,67 @@ async def webhook(request: Request, background_tasks: BackgroundTasks) -> dict:
 
 @app.api_route("/media-proxy", methods=["GET", "HEAD"])
 async def media_proxy(request: Request, url: str = Query(..., min_length=8)) -> Response:
-    parsed = urlparse(url)
-    if parsed.scheme not in {"http", "https"}:
-        raise HTTPException(status_code=400, detail="Invalid URL scheme")
-    allowed_hosts = {
-        host.strip().lower()
-        for host in settings.MEDIA_PROXY_ALLOWED_HOSTS.split(",")
-        if host.strip()
-    }
-    hostname = parsed.hostname.lower() if parsed.hostname else ""
-    host_allowed = any(
-        hostname == allowed or hostname.endswith(f".{allowed}")
-        for allowed in allowed_hosts
-    )
-    if hostname and not host_allowed:
-        raise HTTPException(status_code=400, detail="Host not allowed")
-
     timeout = httpx.Timeout(settings.MEDIA_PROXY_TIMEOUT_SEC)
-    async with httpx.AsyncClient(timeout=timeout, follow_redirects=True) as client:
+    method = "HEAD" if request.method == "HEAD" else "GET"
+    current_url = url
+    allowed_hosts = _allowed_media_hosts()
+    upstream: httpx.Response | None = None
+
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
         try:
-            method = "HEAD" if request.method == "HEAD" else "GET"
-            upstream = await client.request(method, url)
-            if upstream.status_code in {405, 501} and method == "HEAD":
-                upstream = await client.get(url)
+            for _ in range(MAX_MEDIA_PROXY_REDIRECTS + 1):
+                _validate_media_proxy_url(current_url, allowed_hosts)
+                upstream = await client.send(
+                    client.build_request(method, current_url),
+                    stream=True,
+                )
+                if upstream.status_code in {405, 501} and method == "HEAD":
+                    await upstream.aclose()
+                    upstream = await client.send(
+                        client.build_request("GET", current_url),
+                        stream=True,
+                    )
+                if upstream.status_code in REDIRECT_STATUS_CODES:
+                    location = upstream.headers.get("location")
+                    await upstream.aclose()
+                    upstream = None
+                    if not location:
+                        raise HTTPException(status_code=502, detail="Invalid upstream redirect")
+                    current_url = urljoin(current_url, location)
+                    continue
+                break
+            else:
+                raise HTTPException(status_code=502, detail="Too many redirects")
+
+            if not upstream or upstream.status_code >= 400:
+                raise HTTPException(status_code=502, detail="Upstream returned error")
+
+            content_type = upstream.headers.get("content-type", "")
+            if not content_type.startswith("image/"):
+                raise HTTPException(status_code=415, detail="Unsupported media type")
+
+            content_length = upstream.headers.get("content-length")
+            if content_length and content_length.isdigit():
+                if int(content_length) > settings.MEDIA_PROXY_MAX_BYTES:
+                    raise HTTPException(status_code=413, detail="Image too large")
+
+            if request.method == "HEAD":
+                content = b""
+            else:
+                buffer = bytearray()
+                async for chunk in upstream.aiter_bytes():
+                    buffer.extend(chunk)
+                    if len(buffer) > settings.MEDIA_PROXY_MAX_BYTES:
+                        raise HTTPException(status_code=413, detail="Image too large")
+                content = bytes(buffer)
+
+            headers = {"Cache-Control": "public, max-age=3600"}
+            return Response(content=content, media_type=content_type, headers=headers)
         except httpx.HTTPError as exc:
             raise HTTPException(status_code=502, detail=f"Upstream error: {exc}") from exc
-
-    if upstream.status_code >= 400:
-        raise HTTPException(status_code=502, detail="Upstream returned error")
-
-    content_type = upstream.headers.get("content-type", "")
-    if not content_type.startswith("image/"):
-        raise HTTPException(status_code=415, detail="Unsupported media type")
-    content_length = upstream.headers.get("content-length")
-    if content_length and content_length.isdigit():
-        if int(content_length) > settings.MEDIA_PROXY_MAX_BYTES:
-            raise HTTPException(status_code=413, detail="Image too large")
-
-    content = b"" if request.method == "HEAD" else upstream.content
-    if content and len(content) > settings.MEDIA_PROXY_MAX_BYTES:
-        raise HTTPException(status_code=413, detail="Image too large")
-
-    headers = {
-        "Cache-Control": "public, max-age=3600",
-    }
-    return Response(content=content, media_type=content_type, headers=headers)
+        finally:
+            if upstream is not None:
+                await upstream.aclose()
 
 
 app.include_router(auth_router)

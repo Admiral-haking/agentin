@@ -1,11 +1,16 @@
 import os
+import asyncio
+
+import pytest
 
 # Ensure required settings are present before importing app modules.
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://user:pass@localhost/db")
 os.environ.setdefault("DIRECTAM_BASE_URL", "https://directam.example.com")
 os.environ.setdefault("SERVICE_API_KEY", "test")
 
+from app.models.conversation_state import ConversationState
 from app.schemas.send import OutboundPlan
+from app.services.conversation_state import update_state
 from app.services.guardrails import validate_reply_or_rewrite
 from app.services.processor import resolve_repeat_plan
 
@@ -79,3 +84,29 @@ def test_guardrail_blocks_hallucinated_prices_and_options() -> None:
     )
     assert "اسم/مدل" in (updated.text or "")
     assert any(reason.startswith("hallucination_prevented") for reason in reasons)
+
+
+def test_update_state_keeps_order_flow_with_selected_product() -> None:
+    class _SessionStub:
+        async def commit(self) -> None:
+            return None
+
+    state = ConversationState(conversation_id=1)
+    state.selected_product = {"product_id": 10, "page_url": "https://example.com/p/10"}
+    session = _SessionStub()
+
+    updated = asyncio.run(
+        update_state(
+            session,
+            conversation_id=1,
+            intent="order_flow",
+            category="shoes",
+            slots_required=None,
+            slots_filled=None,
+            last_user_question="ثبت سفارش",
+            state=state,
+            preserve_selected_product=True,
+        )
+    )
+
+    assert updated.intent == "order_flow"

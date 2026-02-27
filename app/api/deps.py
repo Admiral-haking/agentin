@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import ipaddress
+
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.core.database import get_session
 from app.models.admin_user import AdminUser
 from app.services.auth import AuthError, decode_token
@@ -25,8 +28,12 @@ async def get_current_admin(
     admin_id = payload.get("sub")
     if not admin_id:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    try:
+        admin_id_int = int(admin_id)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token") from exc
 
-    result = await session.execute(select(AdminUser).where(AdminUser.id == int(admin_id)))
+    result = await session.execute(select(AdminUser).where(AdminUser.id == admin_id_int))
     admin = result.scalars().first()
     if not admin or not admin.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Inactive user")
@@ -46,7 +53,25 @@ def require_role(*roles: str):
 
 
 async def get_request_ip(request: Request) -> str | None:
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()
-    return request.client.host if request.client else None
+    def _valid_ip(raw: str | None) -> str | None:
+        if not raw:
+            return None
+        try:
+            return str(ipaddress.ip_address(raw.strip()))
+        except ValueError:
+            return None
+
+    if settings.TRUST_PROXY_HEADERS:
+        forwarded = request.headers.get("x-forwarded-for")
+        if forwarded:
+            for candidate in forwarded.split(","):
+                parsed = _valid_ip(candidate)
+                if parsed:
+                    return parsed
+        real_ip = _valid_ip(request.headers.get("x-real-ip"))
+        if real_ip:
+            return real_ip
+
+    if request.client:
+        return _valid_ip(request.client.host)
+    return None

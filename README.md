@@ -70,9 +70,12 @@ JWT_ALGORITHM=HS256
 ACCESS_TOKEN_EXPIRE_MINUTES=30
 REFRESH_TOKEN_EXPIRE_DAYS=7
 ADMIN_UI_ORIGINS=http://localhost:5173
+TRUST_PROXY_HEADERS=false
 ```
 
 Auth uses short-lived access tokens and refresh rotation via `/auth/refresh`.
+
+If you're behind a trusted reverse proxy (Nginx/Cloudflare), set `TRUST_PROXY_HEADERS=true` so rate limiting/audit can read `x-forwarded-for`. Keep it `false` when exposed directly to the internet.
 
 Run locally:
 

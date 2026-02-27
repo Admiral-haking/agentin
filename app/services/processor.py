@@ -1844,7 +1844,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 order_hint_text = _plan_to_text(order_plan)
                 order_intent = True
                 conversation_state_payload = await _touch_state(
-                    "order",
+                    "order_flow",
                     category=infer_state_category(query_text),
                 )
                 await send_plan_and_store(
@@ -3385,6 +3385,8 @@ async def send_plan_and_store(
             "message_id": message_id,
             "source": "unspecified",
         }
+        if guardrail_reasons:
+            response_meta["guardrail_reasons"] = list(guardrail_reasons)
         if meta:
             response_meta.update(meta)
         await log_event(
@@ -3453,6 +3455,8 @@ async def send_plan_and_store(
             "message_id": message_id,
             "source": "unspecified",
         }
+        if guardrail_reasons:
+            response_meta["guardrail_reasons"] = list(guardrail_reasons)
         if meta:
             response_meta.update(meta)
         await log_event(

@@ -83,6 +83,7 @@ class Settings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
 
     ADMIN_UI_ORIGINS: str = ""
+    TRUST_PROXY_HEADERS: bool = False
     LOGIN_RATE_LIMIT_WINDOW_SEC: int = 300
     LOGIN_RATE_LIMIT_MAX_ATTEMPTS: int = 5
 
