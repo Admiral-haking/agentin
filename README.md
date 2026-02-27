@@ -104,15 +104,23 @@ If `--password` is omitted, the script will prompt securely.
 
 ## Product sync
 
-Enable the catalog feature and set sync sources in `.env`:
+Enable the catalog feature and set MongoDB sync source in `.env`:
 
 ```
 PRODUCTS_FEATURE_ENABLED=true
-TOROB_PRODUCTS_URL=https://ghlbedovom.com/api/torob/products
+MONGO_PRODUCTS_URI=mongodb://USER:PASS@HOST:27017/second-heart-store
+MONGO_PRODUCTS_DB=second-heart-store
+MONGO_PRODUCTS_COLLECTION=products
+MONGO_PRODUCTS_QUERY={"status":"active"}
+MONGO_PRODUCTS_PAGE_BASE_URL=https://ghlbedovom.com
 SITEMAP_URL=https://ghlbedovom.com/sitemap.xml
 PRODUCT_SCRAPE_ENABLED=true
 ORDER_FORM_ENABLED=true
 ```
+
+Notes:
+- Product sync reads directly from MongoDB (read-only recommended user).
+- `MONGO_PRODUCTS_QUERY` must be a valid JSON object string.
 
 Run a sync manually (admin only):
 

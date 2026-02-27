@@ -158,6 +158,30 @@ BOOT_KEYWORDS = {
     "boot",
     "boots",
 }
+_DIGIT_TRANSLATE = str.maketrans({
+    "۰": "0",
+    "۱": "1",
+    "۲": "2",
+    "۳": "3",
+    "۴": "4",
+    "۵": "5",
+    "۶": "6",
+    "۷": "7",
+    "۸": "8",
+    "۹": "9",
+    "٠": "0",
+    "١": "1",
+    "٢": "2",
+    "٣": "3",
+    "٤": "4",
+    "٥": "5",
+    "٦": "6",
+    "٧": "7",
+    "٨": "8",
+    "٩": "9",
+})
+PRICE_VALUE_RE = re.compile(r"(?<!\d)\d{3,}(?:[,\u066C]\d{3})*(?!\d)")
+PRICE_HINT_RE = re.compile(r"(قیمت|تومان|تومن|ریال|price)", re.IGNORECASE)
 
 
 def _extract_product_slug(text: str | None) -> str | None:
@@ -297,6 +321,124 @@ def _limit_emojis(text: str, max_emojis: int) -> str:
                 continue
         output.append(ch)
     return "".join(output)
+
+
+def _normalize_digits(text: str) -> str:
+    return (text or "").translate(_DIGIT_TRANSLATE)
+
+
+def _extract_price_values(text: str | None) -> set[int]:
+    if not text:
+        return set()
+    normalized = _normalize_digits(text)
+    if not PRICE_HINT_RE.search(normalized):
+        return set()
+    values: set[int] = set()
+    for token in PRICE_VALUE_RE.findall(normalized):
+        try:
+            values.add(int(token.replace(",", "").replace("\u066C", "")))
+        except ValueError:
+            continue
+    return values
+
+
+def _allowed_price_values(
+    products: list[Product] | None,
+    selected_product: dict[str, Any] | None,
+) -> set[int]:
+    values: set[int] = set()
+    for product in products or []:
+        if isinstance(product.price, int) and product.price > 0:
+            values.add(product.price)
+        if isinstance(product.old_price, int) and product.old_price > 0:
+            values.add(product.old_price)
+    if isinstance(selected_product, dict):
+        for key in ("price", "old_price"):
+            raw = selected_product.get(key)
+            if isinstance(raw, int) and raw > 0:
+                values.add(raw)
+    return values
+
+
+def _price_is_grounded(value: int, allowed_values: set[int]) -> bool:
+    if value in allowed_values:
+        return True
+    # Accept common تومان/ریال mismatch.
+    if value * 10 in allowed_values or (value % 10 == 0 and value // 10 in allowed_values):
+        return True
+    return False
+
+
+def _reply_has_ungrounded_price(
+    reply_text: str | None,
+    allowed_values: set[int],
+) -> bool:
+    mentioned = _extract_price_values(reply_text)
+    if not mentioned:
+        return False
+    if not allowed_values:
+        return True
+    return any(not _price_is_grounded(value, allowed_values) for value in mentioned)
+
+
+def _remember_user_context(
+    profile_json: dict[str, Any] | None,
+    *,
+    user_text: str | None,
+    matched_products: list[Product] | None,
+    selected_product: dict[str, Any] | None,
+) -> tuple[dict[str, Any] | None, bool]:
+    original = profile_json if isinstance(profile_json, dict) else None
+    profile = dict(original or {})
+    memory = profile.get("memory")
+    if not isinstance(memory, dict):
+        memory = {}
+
+    changed = False
+    recent_queries = memory.get("recent_queries")
+    if not isinstance(recent_queries, list):
+        recent_queries = []
+    normalized_query = " ".join((user_text or "").split())
+    if normalized_query:
+        normalized_query = normalized_query[:180]
+        if not recent_queries or recent_queries[-1] != normalized_query:
+            recent_queries.append(normalized_query)
+            changed = True
+        max_items = max(settings.USER_MEMORY_ITEMS, 1)
+        if len(recent_queries) > max_items:
+            recent_queries = recent_queries[-max_items:]
+            changed = True
+
+    recent_product_slugs = memory.get("recent_product_slugs")
+    if not isinstance(recent_product_slugs, list):
+        recent_product_slugs = []
+    seen = {slug for slug in recent_product_slugs if isinstance(slug, str)}
+    for product in (matched_products or [])[:3]:
+        slug = (product.slug or "").strip()
+        if slug and slug not in seen:
+            recent_product_slugs.append(slug)
+            seen.add(slug)
+            changed = True
+    if isinstance(selected_product, dict):
+        slug = selected_product.get("slug")
+        if isinstance(slug, str):
+            slug = slug.strip()
+            if slug and slug not in seen:
+                recent_product_slugs.append(slug)
+                seen.add(slug)
+                changed = True
+    max_items = max(settings.USER_MEMORY_ITEMS, 1)
+    if len(recent_product_slugs) > max_items:
+        recent_product_slugs = recent_product_slugs[-max_items:]
+        changed = True
+
+    if changed:
+        memory["recent_queries"] = recent_queries
+        memory["recent_product_slugs"] = recent_product_slugs
+        memory["updated_at"] = utc_now().isoformat()
+        profile["memory"] = memory
+        return profile, True
+    return original, False
 
 
 def _cross_sell_available(user: User) -> bool:
@@ -2128,6 +2270,16 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             )
             if selected_product_state:
                 allow_generic_slots = False
+            remembered_profile, memory_changed = _remember_user_context(
+                user.profile_json if isinstance(user.profile_json, dict) else None,
+                user_text=intent_text,
+                matched_products=matched_products_for_llm,
+                selected_product=selected_product_state
+                if isinstance(selected_product_state, dict)
+                else None,
+            )
+            if memory_changed:
+                user.profile_json = remembered_profile
             conversation_state_payload = await _touch_state(
                 state_intent,
                 category=state_category,
@@ -2499,6 +2651,29 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             elif product_intent and not matched_products and needs_product_details(reply_text):
                 reply_text = build_product_details_question()
                 show_products = False
+            elif (
+                settings.LLM_STRICT_PRICE_GROUNDING
+                and (product_intent or needs_details or wants_products or selected_product_state)
+            ):
+                selected_payload = (
+                    selected_product_state if isinstance(selected_product_state, dict) else None
+                )
+                allowed_prices = _allowed_price_values(llm_products, selected_payload)
+                if _reply_has_ungrounded_price(reply_text, allowed_prices):
+                    reply_text = "برای اعلام قیمت دقیق، لطفاً اسم/مدل یا لینک همون محصول رو بفرستید."
+                    show_products = False
+                    await log_event(
+                        session,
+                        level="info",
+                        event_type="hallucination_prevented",
+                        data={
+                            "conversation_id": conversation.id,
+                            "user_id": user.id,
+                            "reason": "price_not_grounded_in_context",
+                            "allowed_prices": sorted(allowed_prices)[:10],
+                        },
+                        commit=False,
+                    )
 
             guardrail_blocked_products = False
             product_plan = None

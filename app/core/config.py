@@ -89,6 +89,14 @@ class Settings(BaseSettings):
 
     PRODUCTS_FEATURE_ENABLED: bool = False
     TOROB_PRODUCTS_URL: str = "https://ghlbedovom.com/api/torob/products"
+    MONGO_PRODUCTS_URI: str | None = None
+    MONGO_PRODUCTS_DB: str | None = None
+    MONGO_PRODUCTS_COLLECTION: str = "products"
+    MONGO_PRODUCTS_QUERY: str = '{"status":"active"}'
+    MONGO_PRODUCTS_LIMIT: int = 0
+    MONGO_PRODUCTS_PAGE_BASE_URL: str = "https://ghlbedovom.com"
+    MONGO_PRODUCTS_CONNECT_TIMEOUT_MS: int = 10000
+    MONGO_PRODUCTS_SOCKET_TIMEOUT_MS: int = 30000
     SITEMAP_URL: str = "https://ghlbedovom.com/sitemap.xml"
     PRODUCT_SYNC_CACHE_TTL_SEC: int = 300
     PRODUCT_SYNC_TIMEOUT_SEC: float = 15.0
@@ -111,6 +119,8 @@ class Settings(BaseSettings):
     LLM_FIRST_ALL: bool = False
     LLM_PRODUCT_CONTEXT_LIMIT: int = 20
     LLM_REQUIRE_FIELDS_ON_LOW_CONF: bool = True
+    LLM_STRICT_PRICE_GROUNDING: bool = True
+    USER_MEMORY_ITEMS: int = 8
     BEHAVIOR_HISTORY_LIMIT: int = 200
     BEHAVIOR_RECENT_LIMIT: int = 5
     BEHAVIOR_MIN_CONFIDENCE: float = 0.35

@@ -7,12 +7,13 @@ import re
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from html.parser import HTMLParser
 from typing import Any, Iterable
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
+from pymongo import MongoClient
 import structlog
 from sqlalchemy import select
 
@@ -379,6 +380,179 @@ def _normalize_availability(value: Any) -> ProductAvailability:
     return ProductAvailability.unknown
 
 
+def _parse_mongo_query(value: str | None) -> dict[str, Any]:
+    if not value:
+        return {"status": "active"}
+    try:
+        payload = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ValueError("MONGO_PRODUCTS_QUERY must be valid JSON object") from exc
+    if not isinstance(payload, dict):
+        raise ValueError("MONGO_PRODUCTS_QUERY must be a JSON object")
+    return payload
+
+
+def _mongo_db_name(uri: str) -> str | None:
+    parsed = urlparse(uri)
+    path = (parsed.path or "").strip("/")
+    return path or None
+
+
+def _coerce_datetime(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=timezone.utc)
+    if isinstance(value, str):
+        cleaned = value.strip()
+        if cleaned.endswith("Z"):
+            cleaned = f"{cleaned[:-1]}+00:00"
+        try:
+            parsed = datetime.fromisoformat(cleaned)
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    return None
+
+
+def _resolve_page_base_url() -> str:
+    explicit = (settings.MONGO_PRODUCTS_PAGE_BASE_URL or "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+    parsed = urlparse(settings.SITEMAP_URL or "")
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}"
+    return "https://ghlbedovom.com"
+
+
+def _price_snapshot_from_mongo_doc(
+    doc: dict[str, Any],
+    now: datetime | None = None,
+) -> tuple[int | None, int | None, ProductAvailability]:
+    now_utc = now or datetime.now(timezone.utc)
+    variants = doc.get("variants")
+    if not isinstance(variants, list):
+        return None, None, ProductAvailability.unknown
+
+    min_price: int | None = None
+    min_old_price: int | None = None
+    inventory_total = 0
+
+    for variant in variants:
+        if not isinstance(variant, dict):
+            continue
+        if variant.get("active") is False:
+            continue
+
+        price_model = variant.get("price")
+        base_price = None
+        if isinstance(price_model, dict):
+            base_price = _parse_price(price_model.get("amount"))
+        if base_price is None:
+            continue
+
+        final_price = base_price
+        offer = variant.get("offer")
+        if isinstance(offer, dict):
+            discount = _parse_price(offer.get("amount")) or 0
+            starts_at = _coerce_datetime(offer.get("startsAt"))
+            ends_at = _coerce_datetime(offer.get("endsAt"))
+            offer_active = (
+                (starts_at is None or now_utc >= starts_at)
+                and (ends_at is None or now_utc <= ends_at)
+            )
+            if offer_active and discount > 0:
+                final_price = max(base_price - discount, 0)
+                if final_price < base_price:
+                    if min_old_price is None or base_price < min_old_price:
+                        min_old_price = base_price
+
+        if min_price is None or final_price < min_price:
+            min_price = final_price
+
+        inventory = variant.get("inventory")
+        quantity = None
+        if isinstance(inventory, dict):
+            quantity = _parse_price(inventory.get("quantity"))
+        if quantity and quantity > 0:
+            inventory_total += quantity
+
+    if min_price is None:
+        availability = ProductAvailability.unknown
+    elif inventory_total > 0:
+        availability = ProductAvailability.instock
+    else:
+        availability = ProductAvailability.outofstock
+    return min_price, min_old_price, availability
+
+
+def _mongo_doc_to_product(
+    doc: dict[str, Any],
+    page_base_url: str,
+    now: datetime | None = None,
+) -> TorobProduct | None:
+    slug = doc.get("slug")
+    if not isinstance(slug, str) or not slug.strip():
+        return None
+    normalized_slug = slug.strip().strip("/")
+    page_url = _normalize_page_url(f"{page_base_url}/product/{normalized_slug}")
+    price, old_price, availability = _price_snapshot_from_mongo_doc(doc, now=now)
+    raw_id = doc.get("_id")
+    product_id = str(raw_id) if raw_id is not None else None
+    return TorobProduct(
+        product_id=product_id,
+        page_url=page_url,
+        price=price,
+        old_price=old_price,
+        availability=availability,
+    )
+
+
+def _fetch_mongo_products_sync() -> list[TorobProduct]:
+    uri = (settings.MONGO_PRODUCTS_URI or "").strip()
+    if not uri:
+        raise RuntimeError("MONGO_PRODUCTS_URI is not configured")
+    db_name = (settings.MONGO_PRODUCTS_DB or "").strip() or _mongo_db_name(uri)
+    if not db_name:
+        raise RuntimeError("MONGO_PRODUCTS_DB is not configured and DB name was not found in URI")
+
+    collection_name = (settings.MONGO_PRODUCTS_COLLECTION or "products").strip()
+    if not collection_name:
+        raise RuntimeError("MONGO_PRODUCTS_COLLECTION is not configured")
+
+    query = _parse_mongo_query(settings.MONGO_PRODUCTS_QUERY)
+    projection = {
+        "_id": 1,
+        "slug": 1,
+        "status": 1,
+        "variants": 1,
+    }
+
+    page_base_url = _resolve_page_base_url()
+    now_utc = datetime.now(timezone.utc)
+    results: list[TorobProduct] = []
+    limit = max(settings.MONGO_PRODUCTS_LIMIT, 0)
+
+    with MongoClient(
+        uri,
+        serverSelectionTimeoutMS=settings.MONGO_PRODUCTS_CONNECT_TIMEOUT_MS,
+        socketTimeoutMS=settings.MONGO_PRODUCTS_SOCKET_TIMEOUT_MS,
+        connectTimeoutMS=settings.MONGO_PRODUCTS_CONNECT_TIMEOUT_MS,
+    ) as client:
+        cursor = client[db_name][collection_name].find(query, projection=projection)
+        if limit > 0:
+            cursor = cursor.limit(limit)
+        for doc in cursor:
+            if not isinstance(doc, dict):
+                continue
+            mapped = _mongo_doc_to_product(doc, page_base_url, now=now_utc)
+            if mapped:
+                results.append(mapped)
+    return results
+
+
 async def _get_with_retries(
     client: httpx.AsyncClient, url: str, *, expect_json: bool
 ) -> Any:
@@ -422,6 +596,21 @@ async def fetch_torob_products(client: httpx.AsyncClient) -> list[TorobProduct]:
             )
         )
     _cache_set("torob_products", items)
+    return items
+
+
+async def fetch_mongo_products() -> list[TorobProduct]:
+    cache_key = (
+        "mongo_products:"
+        f"{settings.MONGO_PRODUCTS_URI}|{settings.MONGO_PRODUCTS_DB}|"
+        f"{settings.MONGO_PRODUCTS_COLLECTION}|{settings.MONGO_PRODUCTS_QUERY}|"
+        f"{settings.MONGO_PRODUCTS_LIMIT}"
+    )
+    cached = _cache_get(cache_key, settings.PRODUCT_SYNC_CACHE_TTL_SEC)
+    if cached is not None:
+        return cached
+    items = await asyncio.to_thread(_fetch_mongo_products_sync)
+    _cache_set(cache_key, items)
     return items
 
 
@@ -560,9 +749,10 @@ async def run_product_sync(run_id: int | None = None) -> None:
         await session.commit()
 
         error_count = 0
-        torob_products: list[TorobProduct] = []
+        source_products: list[TorobProduct] = []
         sitemap_entries: list[SitemapEntry] = []
         status_by_url: dict[str, str] = {}
+        sync_source = "mongo"
 
         try:
             timeout = httpx.Timeout(settings.PRODUCT_SYNC_TIMEOUT_SEC)
@@ -572,12 +762,20 @@ async def run_product_sync(run_id: int | None = None) -> None:
                 follow_redirects=True,
                 headers=headers,
             ) as client:
-                torob_products, sitemap_entries = await asyncio.gather(
-                    fetch_torob_products(client), fetch_sitemap_urls(client)
+                source_fetch = fetch_mongo_products()
+                source_products, sitemap_entries = await asyncio.gather(
+                    source_fetch,
+                    fetch_sitemap_urls(client),
                 )
 
             merged: dict[str, MergedProduct] = {}
-            for item in torob_products:
+            for item in source_products:
+                base_flags = {
+                    "mongo": True,
+                    "torob": False,
+                    "sitemap": False,
+                    "scraped": False,
+                }
                 merged[item.page_url] = MergedProduct(
                     page_url=item.page_url,
                     slug=_extract_slug(item.page_url),
@@ -586,7 +784,7 @@ async def run_product_sync(run_id: int | None = None) -> None:
                     price=item.price,
                     old_price=item.old_price,
                     availability=item.availability,
-                    source_flags={"torob": True, "sitemap": False, "scraped": False},
+                    source_flags=base_flags,
                 )
 
             for entry in sitemap_entries:
@@ -770,7 +968,7 @@ async def run_product_sync(run_id: int | None = None) -> None:
 
             run.status = "success"
             run.finished_at = utc_now()
-            run.torob_count = len(torob_products)
+            run.torob_count = len(source_products)
             run.sitemap_count = len(sitemap_entries)
             run.created_count = created_count
             run.updated_count = updated_count
@@ -783,6 +981,7 @@ async def run_product_sync(run_id: int | None = None) -> None:
                 event_type="product_sync_finished",
                 data={
                     "run_id": run.id,
+                    "source": sync_source,
                     "created": created_count,
                     "updated": updated_count,
                     "unchanged": unchanged_count,

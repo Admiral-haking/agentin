@@ -8,3 +8,6 @@ admin-ui/dist/
 __pycache__/
 *.pyc
 uvicorn.log
+.npm/
+.ssh/
+agentin_updates.bundle

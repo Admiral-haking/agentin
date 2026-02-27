@@ -78,8 +78,10 @@ def format_user_profile(user: User, behavior_snapshot: dict[str, Any] | None) ->
     if user.vip_score:
         bits.append(f"vip_score={user.vip_score}")
     prefs = None
+    memory = None
     if isinstance(user.profile_json, dict):
         prefs = user.profile_json.get("prefs")
+        memory = user.profile_json.get("memory")
     if isinstance(prefs, dict) and prefs:
         pref_bits = []
         for key in ("categories", "gender", "sizes", "colors", "budget_min", "budget_max"):
@@ -93,6 +95,25 @@ def format_user_profile(user: User, behavior_snapshot: dict[str, Any] | None) ->
                 pref_bits.append(f"{key}={value}")
         if pref_bits:
             bits.append("prefs=" + "; ".join(pref_bits))
+    if isinstance(memory, dict):
+        recent_queries = memory.get("recent_queries")
+        if isinstance(recent_queries, list):
+            normalized_queries = [
+                str(item).strip()
+                for item in recent_queries
+                if isinstance(item, str) and item.strip()
+            ]
+            if normalized_queries:
+                bits.append("recent_queries=" + " | ".join(normalized_queries[-3:]))
+        recent_products = memory.get("recent_product_slugs")
+        if isinstance(recent_products, list):
+            normalized_products = [
+                str(item).strip()
+                for item in recent_products
+                if isinstance(item, str) and item.strip()
+            ]
+            if normalized_products:
+                bits.append("recent_products=" + ", ".join(normalized_products[-5:]))
     if behavior_snapshot:
         bits.append(f"behavior={behavior_snapshot.get('last_pattern')}")
         bits.append(f"confidence={behavior_snapshot.get('confidence')}")
