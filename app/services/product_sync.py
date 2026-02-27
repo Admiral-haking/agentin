@@ -69,6 +69,16 @@ _JSON_LD_RE = re.compile(
     r'<script[^>]*type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
     re.IGNORECASE | re.DOTALL,
 )
+_IMAGE_EXTENSIONS = (
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".webp",
+    ".gif",
+    ".bmp",
+    ".avif",
+    ".svg",
+)
 
 def _normalize_image_url(base_url: str, value: str | None) -> str | None:
     if not value:
@@ -552,6 +562,16 @@ def _media_url(base_url: str, file_id: str) -> str:
     return f"{base_url}/api/media/{file_id}"
 
 
+def _is_likely_product_image_url(value: str) -> bool:
+    parsed = urlparse(value)
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    path = (parsed.path or "").lower()
+    if "/api/media/" in path or "/media/" in path or "/images/" in path or "/image/" in path:
+        return True
+    return any(path.endswith(ext) for ext in _IMAGE_EXTENSIONS)
+
+
 def _resolve_mongo_images(
     doc: dict[str, Any],
     *,
@@ -565,7 +585,7 @@ def _resolve_mongo_images(
         doc.get("gallery"),
     ):
         for image_url in _normalize_images(value, base_url=page_base_url):
-            if image_url not in resolved:
+            if _is_likely_product_image_url(image_url) and image_url not in resolved:
                 resolved.append(image_url)
 
     variants = doc.get("variants")
@@ -576,7 +596,7 @@ def _resolve_mongo_images(
             for image_url in _normalize_images(
                 variant.get("images"), base_url=page_base_url
             ):
-                if image_url not in resolved:
+                if _is_likely_product_image_url(image_url) and image_url not in resolved:
                     resolved.append(image_url)
             media_ids = variant.get("mediaIds")
             if not isinstance(media_ids, list):
@@ -589,7 +609,7 @@ def _resolve_mongo_images(
                 if not file_id:
                     continue
                 image_url = _media_url(page_base_url, file_id)
-                if image_url not in resolved:
+                if _is_likely_product_image_url(image_url) and image_url not in resolved:
                     resolved.append(image_url)
 
     return resolved or None
@@ -1182,7 +1202,7 @@ async def run_product_sync(run_id: int | None = None) -> None:
                         product.images = normalized_images
                         changed = True
                     if entry.images:
-                        merged_images = _merge_image_lists(product.images, entry.images)
+                        merged_images = _merge_image_lists(entry.images, product.images)
                         if merged_images != product.images:
                             product.images = merged_images
                             changed = True

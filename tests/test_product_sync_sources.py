@@ -69,6 +69,7 @@ def test_mongo_doc_to_product_maps_title_description_and_images() -> None:
         "title": "بوت زمستانی",
         "description": "بوت گرم و راحت برای استفاده روزمره",
         "brand": "قلب دوم",
+        "images": ["/_next/static/chunks/app.js"],
         "categories": [category_id],
         "attrs": {"size": [38, 39], "color": ["مشکی"]},
         "variants": [
