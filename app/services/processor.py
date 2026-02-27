@@ -182,6 +182,10 @@ _DIGIT_TRANSLATE = str.maketrans({
 })
 PRICE_VALUE_RE = re.compile(r"(?<!\d)\d{3,}(?:[,\u066C]\d{3})*(?!\d)")
 PRICE_HINT_RE = re.compile(r"(قیمت|تومان|تومن|ریال|price)", re.IGNORECASE)
+IMAGE_BLIND_REPLY_RE = re.compile(
+    r"(نمی.?توانم|نمی.?تونم|متوجه نمی.?شم|can't|cannot).{0,24}(تصویر|عکس|image|photo)",
+    re.IGNORECASE,
+)
 
 
 def _extract_product_slug(text: str | None) -> str | None:
@@ -379,6 +383,15 @@ def _reply_has_ungrounded_price(
     if not allowed_values:
         return True
     return any(not _price_is_grounded(value, allowed_values) for value in mentioned)
+
+
+def _looks_like_image_blind_reply(text: str | None) -> bool:
+    if not text:
+        return False
+    normalized = " ".join(text.split())
+    if not normalized:
+        return False
+    return bool(IMAGE_BLIND_REPLY_RE.search(normalized))
 
 
 def _remember_user_context(
@@ -2714,6 +2727,12 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     reply_text, settings.MAX_RESPONSE_SENTENCES
                 )
                 reply_text = _limit_emojis(reply_text, 1)
+                if normalized.media_url and _looks_like_image_blind_reply(reply_text):
+                    if matched_products:
+                        reply_text = "این مدل رو بررسی کردم؛ چند گزینه نزدیک پیدا شد. رنگ/سایز مدنظرتون رو بگید تا دقیق‌تر بفرستم."
+                        show_products = True
+                    else:
+                        reply_text = "تصویر دریافت شد. برای اعلام دقیق قیمت و موجودی، اسم مدل یا رنگ مدنظرتون رو بفرستید."
                 if last_assistant_text and _is_repetitive_reply(reply_text, last_assistant_text):
                     loop_payload = await _touch_state(
                         state.intent or "unknown",
@@ -3239,7 +3258,15 @@ def build_llm_messages(
             if product.description:
                 description = " ".join(product.description.split())
                 if description:
-                    parts.append(f"توضیحات: {description[:200]}")
+                    parts.append(f"توضیحات: {description[:260]}")
+            if isinstance(product.images, list):
+                image_urls = [
+                    str(item).strip()
+                    for item in product.images
+                    if isinstance(item, str) and str(item).strip()
+                ]
+                if image_urls:
+                    parts.append(f"عکس‌ها: {', '.join(image_urls[:2])}")
             if product.page_url:
                 parts.append(f"لینک: {product.page_url}")
             product_lines.append(" | ".join(parts))

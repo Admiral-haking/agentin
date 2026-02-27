@@ -13,6 +13,7 @@ from typing import Any, Iterable
 from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
+from bson import ObjectId
 from pymongo import MongoClient
 import structlog
 from sqlalchemy import select
@@ -35,6 +36,10 @@ class TorobProduct:
     price: int | None
     old_price: int | None
     availability: ProductAvailability
+    title: str | None = None
+    description: str | None = None
+    images: list[str] | None = None
+    lastmod: datetime | None = None
 
 
 @dataclass
@@ -52,6 +57,9 @@ class MergedProduct:
     price: int | None
     old_price: int | None
     availability: ProductAvailability
+    title: str | None
+    description: str | None
+    images: list[str] | None
     source_flags: dict[str, bool]
     should_scrape: bool = False
 
@@ -427,6 +435,248 @@ def _resolve_page_base_url() -> str:
     return "https://ghlbedovom.com"
 
 
+def _to_clean_text(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    cleaned = " ".join(value.split())
+    return cleaned or None
+
+
+def _to_object_id(value: Any) -> ObjectId | None:
+    if isinstance(value, ObjectId):
+        return value
+    if isinstance(value, str):
+        candidate = value.strip()
+        if candidate and ObjectId.is_valid(candidate):
+            return ObjectId(candidate)
+    return None
+
+
+def _object_id_str(value: Any) -> str | None:
+    if isinstance(value, ObjectId):
+        return str(value)
+    if isinstance(value, str):
+        candidate = value.strip()
+        if candidate:
+            return candidate
+    return None
+
+
+def _iter_mongo_media_ids(doc: dict[str, Any]) -> list[str]:
+    ids: list[str] = []
+    variants = doc.get("variants")
+    if not isinstance(variants, list):
+        return ids
+    for variant in variants:
+        if not isinstance(variant, dict):
+            continue
+        media_ids = variant.get("mediaIds")
+        if not isinstance(media_ids, list):
+            continue
+        for media_id in media_ids:
+            as_str = _object_id_str(media_id)
+            if as_str and as_str not in ids:
+                ids.append(as_str)
+    return ids
+
+
+def _iter_mongo_category_ids(doc: dict[str, Any]) -> list[str]:
+    categories = doc.get("categories")
+    if not isinstance(categories, list):
+        return []
+    ids: list[str] = []
+    for category_id in categories:
+        as_str = _object_id_str(category_id)
+        if as_str and as_str not in ids:
+            ids.append(as_str)
+    return ids
+
+
+def _load_category_name_index(db: Any, category_ids: set[str]) -> dict[str, str]:
+    if not category_ids:
+        return {}
+    object_ids: list[ObjectId] = []
+    for value in sorted(category_ids):
+        parsed = _to_object_id(value)
+        if parsed is not None:
+            object_ids.append(parsed)
+    if not object_ids:
+        return {}
+    index: dict[str, str] = {}
+    cursor = db["categories"].find(
+        {"_id": {"$in": object_ids}},
+        {"name": 1, "slug": 1},
+    )
+    for item in cursor:
+        if not isinstance(item, dict):
+            continue
+        key = _object_id_str(item.get("_id"))
+        if not key:
+            continue
+        name = _to_clean_text(item.get("name")) or _to_clean_text(item.get("slug"))
+        if name:
+            index[key] = name
+    return index
+
+
+def _load_media_file_index(db: Any, media_ids: set[str]) -> dict[str, str]:
+    if not media_ids:
+        return {}
+    object_ids: list[ObjectId] = []
+    for value in sorted(media_ids):
+        parsed = _to_object_id(value)
+        if parsed is not None:
+            object_ids.append(parsed)
+    if not object_ids:
+        return {}
+    index: dict[str, str] = {}
+    cursor = db["media"].find(
+        {"_id": {"$in": object_ids}},
+        {"thumbId": 1, "mobileId": 1, "originalId": 1},
+    )
+    for item in cursor:
+        if not isinstance(item, dict):
+            continue
+        key = _object_id_str(item.get("_id"))
+        if not key:
+            continue
+        for field in ("thumbId", "mobileId", "originalId"):
+            file_id = _object_id_str(item.get(field))
+            if file_id:
+                index[key] = file_id
+                break
+    return index
+
+
+def _media_url(base_url: str, file_id: str) -> str:
+    return f"{base_url}/api/media/{file_id}"
+
+
+def _resolve_mongo_images(
+    doc: dict[str, Any],
+    *,
+    page_base_url: str,
+    media_file_index: dict[str, str],
+) -> list[str] | None:
+    resolved: list[str] = []
+    for value in (
+        doc.get("images"),
+        doc.get("image"),
+        doc.get("gallery"),
+    ):
+        for image_url in _normalize_images(value, base_url=page_base_url):
+            if image_url not in resolved:
+                resolved.append(image_url)
+
+    variants = doc.get("variants")
+    if isinstance(variants, list):
+        for variant in variants:
+            if not isinstance(variant, dict):
+                continue
+            for image_url in _normalize_images(
+                variant.get("images"), base_url=page_base_url
+            ):
+                if image_url not in resolved:
+                    resolved.append(image_url)
+            media_ids = variant.get("mediaIds")
+            if not isinstance(media_ids, list):
+                continue
+            for media_id in media_ids:
+                media_key = _object_id_str(media_id)
+                if not media_key:
+                    continue
+                file_id = media_file_index.get(media_key)
+                if not file_id:
+                    continue
+                image_url = _media_url(page_base_url, file_id)
+                if image_url not in resolved:
+                    resolved.append(image_url)
+
+    return resolved or None
+
+
+def _resolve_mongo_category_names(
+    doc: dict[str, Any],
+    category_name_index: dict[str, str],
+) -> list[str]:
+    names: list[str] = []
+    for category_id in _iter_mongo_category_ids(doc):
+        name = category_name_index.get(category_id)
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _format_attrs(attrs: Any) -> list[str]:
+    if not isinstance(attrs, dict):
+        return []
+    chunks: list[str] = []
+    for key, raw_value in attrs.items():
+        if not isinstance(key, str):
+            continue
+        clean_key = key.strip()
+        if not clean_key:
+            continue
+        if isinstance(raw_value, list):
+            values = [
+                str(item).strip()
+                for item in raw_value
+                if isinstance(item, (str, int, float)) and str(item).strip()
+            ]
+            if values:
+                chunks.append(f"{clean_key}: {', '.join(values[:4])}")
+        elif isinstance(raw_value, (str, int, float)):
+            value = str(raw_value).strip()
+            if value:
+                chunks.append(f"{clean_key}: {value}")
+    return chunks
+
+
+def _format_attribute_values(values: Any) -> list[str]:
+    if not isinstance(values, list):
+        return []
+    chunks: list[str] = []
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        key = _to_clean_text(item.get("key"))
+        value = _to_clean_text(item.get("value"))
+        if key and value:
+            chunks.append(f"{key}: {value}")
+    return chunks
+
+
+def _build_mongo_description(
+    doc: dict[str, Any],
+    category_names: list[str],
+) -> str | None:
+    summary = (
+        _to_clean_text(doc.get("description"))
+        or _to_clean_text(doc.get("searchableText"))
+        or None
+    )
+    meta_parts: list[str] = []
+    brand = _to_clean_text(doc.get("brand"))
+    if brand:
+        meta_parts.append(f"برند: {brand}")
+    if category_names:
+        meta_parts.append(f"دسته‌بندی: {', '.join(category_names[:4])}")
+    attr_chunks = _format_attrs(doc.get("attrs"))
+    if attr_chunks:
+        meta_parts.append("ویژگی‌ها: " + " | ".join(attr_chunks[:5]))
+    attr_value_chunks = _format_attribute_values(doc.get("attributeValues"))
+    if attr_value_chunks:
+        meta_parts.append("جزئیات: " + " | ".join(attr_value_chunks[:5]))
+
+    if not summary and not meta_parts:
+        return None
+    if summary and not meta_parts:
+        return summary[:900]
+    if meta_parts and not summary:
+        return " | ".join(meta_parts)[:900]
+    return f"{summary}\n{' | '.join(meta_parts)}"[:900]
+
+
 def _price_snapshot_from_mongo_doc(
     doc: dict[str, Any],
     now: datetime | None = None,
@@ -492,6 +742,9 @@ def _mongo_doc_to_product(
     doc: dict[str, Any],
     page_base_url: str,
     now: datetime | None = None,
+    *,
+    category_name_index: dict[str, str] | None = None,
+    media_file_index: dict[str, str] | None = None,
 ) -> TorobProduct | None:
     slug = doc.get("slug")
     if not isinstance(slug, str) or not slug.strip():
@@ -501,12 +754,25 @@ def _mongo_doc_to_product(
     price, old_price, availability = _price_snapshot_from_mongo_doc(doc, now=now)
     raw_id = doc.get("_id")
     product_id = str(raw_id) if raw_id is not None else None
+    title = _to_clean_text(doc.get("title")) or _to_clean_text(doc.get("name"))
+    categories = _resolve_mongo_category_names(doc, category_name_index or {})
+    description = _build_mongo_description(doc, categories)
+    images = _resolve_mongo_images(
+        doc,
+        page_base_url=page_base_url,
+        media_file_index=media_file_index or {},
+    )
+    lastmod = _coerce_datetime(doc.get("updatedAt"))
     return TorobProduct(
         product_id=product_id,
         page_url=page_url,
         price=price,
         old_price=old_price,
         availability=availability,
+        title=title,
+        description=description,
+        images=images,
+        lastmod=lastmod,
     )
 
 
@@ -527,6 +793,15 @@ def _fetch_mongo_products_sync() -> list[TorobProduct]:
         "_id": 1,
         "slug": 1,
         "status": 1,
+        "title": 1,
+        "name": 1,
+        "description": 1,
+        "searchableText": 1,
+        "brand": 1,
+        "attrs": 1,
+        "attributeValues": 1,
+        "categories": 1,
+        "updatedAt": 1,
         "variants": 1,
     }
 
@@ -544,10 +819,26 @@ def _fetch_mongo_products_sync() -> list[TorobProduct]:
         cursor = client[db_name][collection_name].find(query, projection=projection)
         if limit > 0:
             cursor = cursor.limit(limit)
-        for doc in cursor:
-            if not isinstance(doc, dict):
-                continue
-            mapped = _mongo_doc_to_product(doc, page_base_url, now=now_utc)
+        docs = [doc for doc in cursor if isinstance(doc, dict)]
+
+        category_ids: set[str] = set()
+        media_ids: set[str] = set()
+        for doc in docs:
+            category_ids.update(_iter_mongo_category_ids(doc))
+            media_ids.update(_iter_mongo_media_ids(doc))
+
+        db = client[db_name]
+        category_name_index = _load_category_name_index(db, category_ids)
+        media_file_index = _load_media_file_index(db, media_ids)
+
+        for doc in docs:
+            mapped = _mongo_doc_to_product(
+                doc,
+                page_base_url,
+                now=now_utc,
+                category_name_index=category_name_index,
+                media_file_index=media_file_index,
+            )
             if mapped:
                 results.append(mapped)
     return results
@@ -779,11 +1070,14 @@ async def run_product_sync(run_id: int | None = None) -> None:
                 merged[item.page_url] = MergedProduct(
                     page_url=item.page_url,
                     slug=_extract_slug(item.page_url),
-                    lastmod=None,
+                    lastmod=item.lastmod,
                     product_id=item.product_id,
                     price=item.price,
                     old_price=item.old_price,
                     availability=item.availability,
+                    title=item.title,
+                    description=item.description,
+                    images=item.images,
                     source_flags=base_flags,
                 )
 
@@ -801,7 +1095,15 @@ async def run_product_sync(run_id: int | None = None) -> None:
                     price=None,
                     old_price=None,
                     availability=ProductAvailability.unknown,
-                    source_flags={"torob": False, "sitemap": True, "scraped": False},
+                    title=None,
+                    description=None,
+                    images=None,
+                    source_flags={
+                        "mongo": False,
+                        "torob": False,
+                        "sitemap": True,
+                        "scraped": False,
+                    },
                 )
 
             page_urls = list(merged.keys())
@@ -824,10 +1126,19 @@ async def run_product_sync(run_id: int | None = None) -> None:
             for entry in merged.values():
                 product = existing_products.get(entry.page_url)
                 if product:
-                    needs_scrape = not product.title or not product.images
-                    if product.availability == ProductAvailability.unknown:
+                    effective_title = product.title or entry.title
+                    effective_images = product.images or entry.images
+                    effective_price = product.price if product.price is not None else entry.price
+                    effective_availability = (
+                        product.availability
+                        if product.availability != ProductAvailability.unknown
+                        else entry.availability
+                    )
+
+                    needs_scrape = not effective_title or not effective_images
+                    if effective_availability == ProductAvailability.unknown:
                         needs_scrape = True
-                    if product.price is None:
+                    if effective_price is None:
                         needs_scrape = True
                     if entry.lastmod and product.lastmod and entry.lastmod > product.lastmod:
                         needs_scrape = True
@@ -839,6 +1150,12 @@ async def run_product_sync(run_id: int | None = None) -> None:
                         changed = True
                     if entry.slug and entry.slug != product.slug:
                         product.slug = entry.slug
+                        changed = True
+                    if entry.title and entry.title != product.title:
+                        product.title = entry.title
+                        changed = True
+                    if entry.description and entry.description != product.description:
+                        product.description = entry.description
                         changed = True
                     if entry.price is not None and entry.price != product.price:
                         product.price = entry.price
@@ -864,6 +1181,11 @@ async def run_product_sync(run_id: int | None = None) -> None:
                     if product.images and normalized_images != product.images:
                         product.images = normalized_images
                         changed = True
+                    if entry.images:
+                        merged_images = _merge_image_lists(product.images, entry.images)
+                        if merged_images != product.images:
+                            product.images = merged_images
+                            changed = True
 
                     if entry.should_scrape:
                         scrape_candidates.append((product, entry))
@@ -877,20 +1199,26 @@ async def run_product_sync(run_id: int | None = None) -> None:
                         product_id=entry.product_id,
                         slug=entry.slug,
                         page_url=entry.page_url,
-                        title=None,
-                        description=None,
-                        images=None,
+                        title=entry.title,
+                        description=entry.description,
+                        images=entry.images,
                         price=entry.price,
                         old_price=entry.old_price,
                         availability=entry.availability,
                         lastmod=entry.lastmod,
                         source_flags=entry.source_flags,
                     )
-                    entry.should_scrape = True
+                    entry.should_scrape = not (
+                        entry.title
+                        and entry.images
+                        and entry.price is not None
+                        and entry.availability != ProductAvailability.unknown
+                    )
                     session.add(record)
                     existing_products[entry.page_url] = record
                     status_by_url[entry.page_url] = "created"
-                    scrape_candidates.append((record, entry))
+                    if entry.should_scrape:
+                        scrape_candidates.append((record, entry))
 
             await session.commit()
 

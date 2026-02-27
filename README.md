@@ -121,6 +121,8 @@ ORDER_FORM_ENABLED=true
 Notes:
 - Product sync reads directly from MongoDB (read-only recommended user).
 - `MONGO_PRODUCTS_QUERY` must be a valid JSON object string.
+- Sync imports `title`, `description`, `brand/attrs`, and product images from Mongo.
+- Image URLs are resolved from product `variants.mediaIds` via `/api/media/{fileId}` on `MONGO_PRODUCTS_PAGE_BASE_URL`.
 
 Run a sync manually (admin only):
 

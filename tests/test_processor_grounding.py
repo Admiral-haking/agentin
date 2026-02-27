@@ -7,6 +7,7 @@ os.environ.setdefault("SERVICE_API_KEY", "test")
 
 from app.services.processor import (
     _allowed_price_values,
+    _looks_like_image_blind_reply,
     _remember_user_context,
     _reply_has_ungrounded_price,
 )
@@ -46,3 +47,8 @@ def test_allowed_price_values_collects_product_and_selected_prices() -> None:
     selected = {"price": 130000, "old_price": 150000}
     values = _allowed_price_values(products, selected)
     assert values == {100000, 120000, 130000, 150000}
+
+
+def test_detects_image_blind_replies() -> None:
+    assert _looks_like_image_blind_reply("متاسفانه نمی‌توانم تصویر را ببینم.") is True
+    assert _looks_like_image_blind_reply("این مدل موجوده و قیمتش مشخصه.") is False

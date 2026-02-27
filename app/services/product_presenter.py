@@ -57,6 +57,7 @@ def build_selected_product_payload(product: Product) -> dict[str, object]:
         if hasattr(product.availability, "value")
         else str(product.availability or "")
     )
+    images = _normalize_images(product.images)
     return {
         "product_id": product.id,
         "title": product.title,
@@ -65,6 +66,8 @@ def build_selected_product_payload(product: Product) -> dict[str, object]:
         "price": product.price,
         "old_price": product.old_price,
         "availability": availability or None,
+        "description": product.description,
+        "images": images[:5] if images else None,
     }
 
 
@@ -86,7 +89,7 @@ def _build_product_url(product: Product) -> str | None:
     slug = (product.slug or "").strip().strip("/")
     if not slug:
         return None
-    base = settings.SITEMAP_URL or settings.TOROB_PRODUCTS_URL
+    base = settings.MONGO_PRODUCTS_PAGE_BASE_URL or settings.SITEMAP_URL or settings.TOROB_PRODUCTS_URL
     if not base:
         return None
     parsed = urlparse(base)

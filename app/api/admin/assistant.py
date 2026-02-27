@@ -155,6 +155,18 @@ def _build_product_context(products: list[Product]) -> str:
         parts.append(f"موجودی: {availability}")
         if product.product_id:
             parts.append(f"مدل: {product.product_id}")
+        if product.description:
+            summary = " ".join(product.description.split())
+            if summary:
+                parts.append(f"توضیحات: {summary[:220]}")
+        if isinstance(product.images, list):
+            image_urls = [
+                str(item).strip()
+                for item in product.images
+                if isinstance(item, str) and str(item).strip()
+            ]
+            if image_urls:
+                parts.append(f"عکس‌ها: {', '.join(image_urls[:2])}")
         if product.page_url:
             parts.append(f"لینک: {product.page_url}")
         lines.append(" | ".join(parts))
@@ -202,7 +214,7 @@ def _build_product_url_from_slug(slug: str) -> str | None:
     slug_value = slug.strip().strip("/")
     if not slug_value:
         return None
-    base = settings.SITEMAP_URL or settings.TOROB_PRODUCTS_URL
+    base = settings.MONGO_PRODUCTS_PAGE_BASE_URL or settings.SITEMAP_URL or settings.TOROB_PRODUCTS_URL
     if not base:
         return None
     parsed = urlparse(base)
