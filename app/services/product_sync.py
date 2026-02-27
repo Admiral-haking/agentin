@@ -303,7 +303,7 @@ def _merge_image_lists(
     incoming_items = _normalize_images(incoming)
     for entry in existing_items + incoming_items:
         entry = entry.strip() if entry else ""
-        if entry and entry not in merged:
+        if entry and _is_likely_product_image_url(entry) and entry not in merged:
             merged.append(entry)
     return merged or None
 
@@ -1197,9 +1197,13 @@ async def run_product_sync(run_id: int | None = None) -> None:
                         product.source_flags = merged_flags
                         changed = True
 
-                    normalized_images = _normalize_images(product.images)
+                    normalized_images = [
+                        image_url
+                        for image_url in _normalize_images(product.images)
+                        if _is_likely_product_image_url(image_url)
+                    ]
                     if product.images and normalized_images != product.images:
-                        product.images = normalized_images
+                        product.images = normalized_images or None
                         changed = True
                     if entry.images:
                         merged_images = _merge_image_lists(entry.images, product.images)
