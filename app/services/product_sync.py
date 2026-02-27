@@ -79,6 +79,16 @@ _IMAGE_EXTENSIONS = (
     ".avif",
     ".svg",
 )
+_NON_IMAGE_EXTENSIONS = (
+    ".js",
+    ".css",
+    ".json",
+    ".map",
+    ".txt",
+    ".xml",
+    ".woff",
+    ".woff2",
+)
 
 def _normalize_image_url(base_url: str, value: str | None) -> str | None:
     if not value:
@@ -567,6 +577,8 @@ def _is_likely_product_image_url(value: str) -> bool:
     if parsed.scheme not in {"http", "https"}:
         return False
     path = (parsed.path or "").lower()
+    if any(path.endswith(ext) for ext in _NON_IMAGE_EXTENSIONS):
+        return False
     if "/api/media/" in path or "/media/" in path or "/images/" in path or "/image/" in path:
         return True
     return any(path.endswith(ext) for ext in _IMAGE_EXTENSIONS)
