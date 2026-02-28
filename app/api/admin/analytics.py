@@ -212,6 +212,15 @@ async def conversation_quality_summary(
         )
         or 0
     )
+    loop_escalations = (
+        await session.scalar(
+            select(func.count())
+            .select_from(AppLog)
+            .where(AppLog.event_type == "loop_escalated_to_operator")
+            .where(AppLog.created_at >= since)
+        )
+        or 0
+    )
     guardrail_rewrites = (
         await session.scalar(
             select(func.count())
@@ -303,6 +312,8 @@ async def conversation_quality_summary(
         actions.append("اصلاح intent routing: افزودن کلیدواژه‌های محاوره‌ای واقعی")
     if loop_rate >= 0.08:
         actions.append("تقویت loop-breaker: افزایش تنوع پاسخ و مسیر خروج قطعی")
+    if loop_escalations >= 3:
+        actions.append("تعداد ارجاع loop به اپراتور بالاست؛ routing اولیه و guardrail نیاز به بهینه‌سازی دارد.")
     if image_user_messages and hallucination_prevented < max(1, image_user_messages // 20):
         actions.append("سخت‌گیری بیشتر روی grounding قیمت/موجودی در سناریو تصویر")
     if not actions:
@@ -316,6 +327,7 @@ async def conversation_quality_summary(
             "assistant_sample_size": assistant_sample_size,
             "user_image_messages": image_user_messages,
             "loop_events": loop_events,
+            "loop_escalations": loop_escalations,
             "guardrail_rewrites": guardrail_rewrites,
             "hallucination_prevented": hallucination_prevented,
             "unknown_intents": unknown_intents,

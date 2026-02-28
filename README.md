@@ -168,7 +168,14 @@ The backend exposes aggregated analytics:
 The AI context viewer:
 
 - `GET /admin/ai/context?conversation_id=...`
+- `GET /admin/ai/trace/{conversation_id}` (Agent Trace by Conversation)
 - `POST /admin/ai/simulate_reply`
+
+Loop protection:
+
+- `LOOP_AUTO_ESCALATE_ENABLED=true`
+- `LOOP_ESCALATION_THRESHOLD=3`
+- `LOOP_ESCALATION_COOLDOWN_MIN=120`
 
 ## Docker (minimal)
 

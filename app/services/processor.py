@@ -112,7 +112,10 @@ from app.services.product_taxonomy import infer_tags
 from app.services.prompts import load_prompt
 from app.services.media_analyzer import analyze_image_url, is_likely_image_url
 from app.services.sender import Sender, SenderError
-from app.services.support_tickets import get_or_create_ticket
+from app.services.support_tickets import (
+    auto_escalate_loop_to_operator,
+    get_or_create_ticket,
+)
 from app.services.user_behavior_store import (
     build_behavior_snapshot,
     get_behavior_profile,
@@ -1707,7 +1710,24 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     commit=False,
                 )
                 await session.commit()
-                if router_intent == "store_info":
+                escalated_ticket = None
+                if settings.LOOP_AUTO_ESCALATE_ENABLED:
+                    escalated_ticket = await auto_escalate_loop_to_operator(
+                        session,
+                        user_id=user.id,
+                        conversation_id=conversation.id,
+                        loop_counter=loop_count,
+                        threshold=settings.LOOP_ESCALATION_THRESHOLD,
+                        cooldown_minutes=settings.LOOP_ESCALATION_COOLDOWN_MIN,
+                        reason="negative_feedback",
+                        last_message=intent_text or behavior_input,
+                    )
+                if escalated_ticket:
+                    reply_text = (
+                        "برای جلوگیری از تکرار، گفتگو به اپراتور ارجاع شد. "
+                        "همکار پشتیبانی خیلی زود ادامه می‌دهد."
+                    )
+                elif router_intent == "store_info":
                     reply_text = (
                         "حق با شماست، اشتباه شد. "
                         "منظورتون لینک دسته‌بندی محصولات تو سایت هست یا آدرس شعبه‌ها؟"
@@ -1729,6 +1749,8 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         "intent": "loop_breaker",
                         "handler": "loop_breaker",
                         "loop_counter": loop_count,
+                        "ticket_id": escalated_ticket.id if escalated_ticket else None,
+                        "auto_escalated": bool(escalated_ticket),
                     }),
                 )
                 return
@@ -2991,6 +3013,26 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                             reply_text = build_angry_response()
                         else:
                             reply_text = "حق با شماست، اشتباه شد. اسم دقیق مدل یا یه عکس از محصول رو می‌فرستید؟"
+                    escalated_ticket = None
+                    if settings.LOOP_AUTO_ESCALATE_ENABLED:
+                        escalated_ticket = await auto_escalate_loop_to_operator(
+                            session,
+                            user_id=user.id,
+                            conversation_id=conversation.id,
+                            loop_counter=loop_count,
+                            threshold=settings.LOOP_ESCALATION_THRESHOLD,
+                            cooldown_minutes=settings.LOOP_ESCALATION_COOLDOWN_MIN,
+                            reason=loop_reason or "loop_detected",
+                            last_message=intent_text,
+                        )
+                    if escalated_ticket:
+                        rewrite_reasons.append("auto_escalated_to_operator")
+                        reply_text = (
+                            "برای جلوگیری از تکرار، گفتگو به اپراتور ارجاع شد. "
+                            "همکار پشتیبانی خیلی زود ادامه می‌دهد."
+                        )
+                        show_products = False
+                        product_plan = None
                     reply_text = _limit_questions(reply_text, max_questions)
                     reply_text = _limit_sentences(
                         reply_text, settings.MAX_RESPONSE_SENTENCES

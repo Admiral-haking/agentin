@@ -18,6 +18,7 @@ from app.schemas.admin.ai_context import AISimulateIn, AISimulateOut, AIPinProdu
 from app.schemas.webhook import NormalizedMessage
 from app.services.context_bundle import build_context_bundle
 from app.services.product_catalog import get_catalog_snapshot
+from app.services.agent_trace import build_agent_trace_turns
 from app.services.processor import (
     build_llm_messages,
     build_response_log_summary,
@@ -194,6 +195,84 @@ async def get_ai_context(
         context=bundle.system_prompt,
         sections=sections,
     )
+
+
+@router.get("/trace/{conversation_id}", response_model=dict)
+async def get_agent_trace_by_conversation(
+    conversation_id: int,
+    limit_turns: int = Query(default=15, ge=1, le=60),
+    log_limit: int = Query(default=800, ge=100, le=5000),
+    include_debug_data: bool = Query(default=False),
+    session: AsyncSession = Depends(get_session),
+    admin=Depends(require_role("admin", "staff")),
+) -> dict:
+    conversation = await session.get(Conversation, conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    user = await session.get(User, conversation.user_id)
+    state = await session.get(ConversationState, conversation.id)
+    state_payload = build_state_payload(state)
+
+    message_limit = min(2500, max(300, limit_turns * 80))
+    message_result = await session.execute(
+        select(Message)
+        .where(Message.conversation_id == conversation.id)
+        .order_by(Message.created_at.desc())
+        .limit(message_limit)
+    )
+    messages = list(reversed(message_result.scalars().all()))
+
+    log_result = await session.execute(
+        select(AppLog)
+        .where(cast(AppLog.data["conversation_id"].astext, Integer) == conversation.id)
+        .order_by(AppLog.created_at.desc())
+        .limit(log_limit)
+    )
+    logs = list(reversed(log_result.scalars().all()))
+    turns = build_agent_trace_turns(
+        logs=logs,
+        messages=messages,
+        limit_turns=limit_turns,
+        include_debug_data=include_debug_data,
+    )
+
+    unresolved = False
+    if (
+        conversation.last_user_message_at is not None
+        and (
+            conversation.last_bot_message_at is None
+            or conversation.last_bot_message_at < conversation.last_user_message_at
+        )
+    ):
+        unresolved = True
+
+    return {
+        "conversation": {
+            "id": conversation.id,
+            "status": conversation.status,
+            "user_id": conversation.user_id,
+            "last_user_message_at": conversation.last_user_message_at.isoformat()
+            if conversation.last_user_message_at
+            else None,
+            "last_bot_message_at": conversation.last_bot_message_at.isoformat()
+            if conversation.last_bot_message_at
+            else None,
+        },
+        "user": {
+            "id": user.id if user else None,
+            "external_id": user.external_id if user else None,
+            "username": user.username if user else None,
+        },
+        "state": state_payload,
+        "stats": {
+            "turn_count": len(turns),
+            "messages_loaded": len(messages),
+            "logs_loaded": len(logs),
+            "unresolved": unresolved,
+        },
+        "turns": turns,
+    }
 
 
 @router.post("/clear_state")
