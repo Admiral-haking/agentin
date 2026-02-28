@@ -236,6 +236,9 @@ export const ConversationQualityPage = () => {
                 color={genericRate <= 0.1 ? 'success' : genericRate <= 0.2 ? 'warning' : 'error'}
                 sx={{ mt: 1 }}
               />
+              <Typography variant="caption" color="text.secondary">
+                sample: {quality?.counts?.assistant_sample_size ?? 0}
+              </Typography>
             </CardContent>
           </Card>
         </Grid>

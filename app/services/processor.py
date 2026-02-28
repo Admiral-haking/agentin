@@ -961,10 +961,24 @@ def _format_required_question_alt(missing: list[str], known: dict[str, str]) -> 
 
 
 def _last_assistant_text(history: list[Message]) -> str | None:
+    recent = _recent_assistant_texts(history, limit=1)
+    return recent[0] if recent else None
+
+
+def _recent_assistant_texts(history: list[Message], limit: int = 3) -> list[str]:
+    if limit <= 0:
+        return []
+    texts: list[str] = []
     for item in reversed(history):
-        if item.role == "assistant" and item.content_text:
-            return item.content_text.strip()
-    return None
+        if item.role != "assistant" or not item.content_text:
+            continue
+        cleaned = item.content_text.strip()
+        if not cleaned:
+            continue
+        texts.append(cleaned)
+        if len(texts) >= limit:
+            break
+    return texts
 
 
 def _contains_required_fields(text: str, missing: list[str]) -> bool:
@@ -1370,7 +1384,8 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     commit=False,
                 )
                 await session.commit()
-            last_assistant_text = _last_assistant_text(history)
+            recent_assistant_texts = _recent_assistant_texts(history, limit=3)
+            last_assistant_text = recent_assistant_texts[0] if recent_assistant_texts else None
             is_first_message = (
                 sum(1 for msg in history if msg.role == "user" and msg.type != "read")
                 <= 1
@@ -2888,7 +2903,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 )
 
             if reply_text:
-                guardrail_reasons: list[str] = []
+                rewrite_reasons: list[str] = []
                 allow_question = bool(
                     order_hint_text
                     or low_confidence_block
@@ -2902,12 +2917,14 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 )
                 reply_text = _limit_emojis(reply_text, 1)
                 if normalized.media_url and _looks_like_image_blind_reply(reply_text):
+                    rewrite_reasons.append("image_blind_reply_rewritten")
                     if matched_products:
                         reply_text = "این مدل رو بررسی کردم؛ چند گزینه نزدیک پیدا شد. رنگ/سایز مدنظرتون رو بگید تا دقیق‌تر بفرستم."
                         show_products = True
                     else:
                         reply_text = "تصویر دریافت شد. برای اعلام دقیق قیمت و موجودی، اسم مدل یا رنگ مدنظرتون رو بفرستید."
                 if _looks_like_generic_assistant_reply(reply_text):
+                    rewrite_reasons.append("generic_reply_rewritten")
                     reply_text = _build_contextual_reply(
                         user=user,
                         query_text=query_text,
@@ -2918,7 +2935,20 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     )
                     if allow_product_cards and matched_products:
                         show_products = True
+                loop_reference: str | None = None
+                loop_reason: str | None = None
                 if last_assistant_text and _is_repetitive_reply(reply_text, last_assistant_text):
+                    loop_reference = last_assistant_text
+                    loop_reason = "loop_repeated_last_reply"
+                elif (
+                    len(recent_assistant_texts) >= 2
+                    and _is_repetitive_reply(reply_text, recent_assistant_texts[1])
+                ):
+                    loop_reference = recent_assistant_texts[1]
+                    loop_reason = "loop_repeated_recent_cycle"
+                if loop_reference:
+                    if loop_reason:
+                        rewrite_reasons.append(loop_reason)
                     loop_payload = await _touch_state(
                         state.intent or "unknown",
                         category=state.category or infer_state_category(query_text),
@@ -2940,7 +2970,8 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                             "conversation_id": conversation.id,
                             "user_id": user.id,
                             "reply_text": reply_text,
-                            "last_reply": last_assistant_text,
+                            "last_reply": loop_reference,
+                            "reason": loop_reason,
                             "loop_counter": loop_count,
                         },
                         commit=False,
@@ -2974,9 +3005,13 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 )
                 reply_text = guardrail_plan.text or reply_text
                 if guardrail_reasons:
+                    rewrite_reasons.extend(guardrail_reasons)
+
+                rewrite_reasons = list(dict.fromkeys(rewrite_reasons))
+                if rewrite_reasons:
                     guardrail_blocked_products = any(
                         reason.startswith(("link_request", "template_blocked", "hallucination_prevented"))
-                        for reason in guardrail_reasons
+                        for reason in rewrite_reasons
                     )
                     if guardrail_blocked_products:
                         show_products = False
@@ -2988,12 +3023,12 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         data={
                             "conversation_id": conversation.id,
                             "user_id": user.id,
-                            "reasons": guardrail_reasons,
+                            "reasons": rewrite_reasons,
                             "reply_text": reply_text,
                         },
                         commit=False,
                     )
-                    for reason in guardrail_reasons:
+                    for reason in rewrite_reasons:
                         if reason.startswith("template_blocked"):
                             await log_event(
                                 session,

@@ -244,6 +244,7 @@ async def conversation_quality_summary(
         for (text,) in assistant_text_rows.all()
         if isinstance(text, str) and text.strip()
     ]
+    assistant_sample_size = len(assistant_texts)
     generic_assistant_count = sum(
         1 for text in assistant_texts if _GENERIC_ASSISTANT_RE.search(text)
     )
@@ -282,8 +283,8 @@ async def conversation_quality_summary(
     )
 
     generic_rate = (
-        round(generic_assistant_count / total_assistant_messages, 3)
-        if total_assistant_messages
+        round(generic_assistant_count / assistant_sample_size, 3)
+        if assistant_sample_size
         else 0.0
     )
     unknown_intent_rate = (
@@ -312,6 +313,7 @@ async def conversation_quality_summary(
         "counts": {
             "user_messages": total_user_messages,
             "assistant_messages": total_assistant_messages,
+            "assistant_sample_size": assistant_sample_size,
             "user_image_messages": image_user_messages,
             "loop_events": loop_events,
             "guardrail_rewrites": guardrail_rewrites,

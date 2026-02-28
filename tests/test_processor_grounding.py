@@ -10,6 +10,7 @@ from app.services.processor import (
     _allowed_price_values,
     _looks_like_generic_assistant_reply,
     _looks_like_image_blind_reply,
+    _recent_assistant_texts,
     _remember_user_context,
     _reply_has_ungrounded_price,
 )
@@ -74,3 +75,15 @@ def test_contextual_reply_uses_product_context() -> None:
     )
     assert "کفش اسپرت نایک" in reply
     assert "890,000" in reply
+
+
+def test_recent_assistant_texts_returns_latest_nonempty_items() -> None:
+    history = [
+        SimpleNamespace(role="assistant", content_text=""),
+        SimpleNamespace(role="assistant", content_text="سلام"),
+        SimpleNamespace(role="user", content_text="بوت میخوام"),
+        SimpleNamespace(role="assistant", content_text="این مدل موجوده"),
+        SimpleNamespace(role="assistant", content_text="لینکش رو هم می‌فرستم"),
+    ]
+    items = _recent_assistant_texts(history, limit=2)
+    assert items == ["لینکش رو هم می‌فرستم", "این مدل موجوده"]
