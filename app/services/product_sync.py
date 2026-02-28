@@ -456,6 +456,10 @@ def _resolve_page_base_url() -> str:
 
 
 def _to_clean_text(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        value = str(value)
     if not isinstance(value, str):
         return None
     cleaned = " ".join(value.split())
@@ -678,9 +682,145 @@ def _format_attribute_values(values: Any) -> list[str]:
     return chunks
 
 
+def _unique_append(items: list[str], value: str | None, limit: int) -> None:
+    if not value:
+        return
+    cleaned = value.strip()
+    if not cleaned or cleaned in items:
+        return
+    if len(items) >= limit:
+        return
+    items.append(cleaned)
+
+
+def _variant_size_values(variant: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    attrs = variant.get("attributeValues")
+    if not isinstance(attrs, list):
+        return values
+    for item in attrs:
+        if not isinstance(item, dict):
+            continue
+        key = _to_clean_text(item.get("key"))
+        if not key or key.lower() != "size":
+            continue
+        raw = item.get("value")
+        if isinstance(raw, list):
+            for value in raw:
+                _unique_append(values, _to_clean_text(value), 16)
+        else:
+            _unique_append(values, _to_clean_text(raw), 16)
+    return values
+
+
+def _variant_color_values(variant: dict[str, Any]) -> list[str]:
+    values: list[str] = []
+    _unique_append(values, _to_clean_text(variant.get("colorName")), 10)
+    attrs = variant.get("attributeValues")
+    if isinstance(attrs, list):
+        for item in attrs:
+            if not isinstance(item, dict):
+                continue
+            key = _to_clean_text(item.get("key"))
+            if not key or key.lower() != "color":
+                continue
+            raw = item.get("value")
+            if isinstance(raw, dict):
+                for field in ("name", "value", "key", "family"):
+                    _unique_append(values, _to_clean_text(raw.get(field)), 10)
+            elif isinstance(raw, list):
+                for value in raw:
+                    _unique_append(values, _to_clean_text(value), 10)
+            else:
+                _unique_append(values, _to_clean_text(raw), 10)
+    return values
+
+
+def _variant_summary_chunks(doc: dict[str, Any], now: datetime | None) -> list[str]:
+    now_utc = now or datetime.now(timezone.utc)
+    variants = doc.get("variants")
+    if not isinstance(variants, list):
+        return []
+
+    active_count = 0
+    in_stock_variants = 0
+    inventory_total = 0
+    discounted_variants = 0
+    sizes: list[str] = []
+    colors: list[str] = []
+    final_prices: list[int] = []
+
+    for variant in variants:
+        if not isinstance(variant, dict):
+            continue
+        if variant.get("active") is False:
+            continue
+        active_count += 1
+
+        for value in _variant_size_values(variant):
+            _unique_append(sizes, value, 12)
+        for value in _variant_color_values(variant):
+            _unique_append(colors, value, 8)
+
+        inventory = variant.get("inventory")
+        quantity = None
+        if isinstance(inventory, dict):
+            quantity = _parse_price(inventory.get("quantity"))
+        if quantity and quantity > 0:
+            inventory_total += quantity
+            in_stock_variants += 1
+
+        base_price = None
+        price_model = variant.get("price")
+        if isinstance(price_model, dict):
+            base_price = _parse_price(price_model.get("amount"))
+        if base_price is None:
+            continue
+
+        final_price = base_price
+        offer = variant.get("offer")
+        if isinstance(offer, dict):
+            discount = _parse_price(offer.get("amount")) or 0
+            starts_at = _coerce_datetime(offer.get("startsAt"))
+            ends_at = _coerce_datetime(offer.get("endsAt"))
+            offer_active = (
+                (starts_at is None or now_utc >= starts_at)
+                and (ends_at is None or now_utc <= ends_at)
+            )
+            if offer_active and discount > 0:
+                final_price = max(base_price - discount, 0)
+                if final_price < base_price:
+                    discounted_variants += 1
+        final_prices.append(final_price)
+
+    if active_count == 0:
+        return []
+
+    chunks = [f"واریانت فعال: {active_count}"]
+    if in_stock_variants > 0:
+        chunks.append(f"واریانت موجود: {in_stock_variants}")
+    if inventory_total > 0:
+        chunks.append(f"موجودی کل تقریبی: {inventory_total}")
+    if final_prices:
+        min_price = min(final_prices)
+        max_price = max(final_prices)
+        if min_price == max_price:
+            chunks.append(f"قیمت واریانت: {min_price:,}")
+        else:
+            chunks.append(f"بازه قیمت واریانت: {min_price:,} تا {max_price:,}")
+    if discounted_variants > 0:
+        chunks.append(f"واریانت تخفیف‌دار: {discounted_variants}")
+    if sizes:
+        chunks.append(f"سایزهای واریانت: {', '.join(sizes[:10])}")
+    if colors:
+        chunks.append(f"رنگ‌های واریانت: {', '.join(colors[:6])}")
+    return chunks
+
+
 def _build_mongo_description(
     doc: dict[str, Any],
     category_names: list[str],
+    now: datetime | None = None,
 ) -> str | None:
     summary = (
         _to_clean_text(doc.get("description"))
@@ -699,6 +839,9 @@ def _build_mongo_description(
     attr_value_chunks = _format_attribute_values(doc.get("attributeValues"))
     if attr_value_chunks:
         meta_parts.append("جزئیات: " + " | ".join(attr_value_chunks[:5]))
+    variant_chunks = _variant_summary_chunks(doc, now=now)
+    if variant_chunks:
+        meta_parts.append("وضعیت واریانت: " + " | ".join(variant_chunks[:6]))
 
     if not summary and not meta_parts:
         return None
@@ -788,7 +931,7 @@ def _mongo_doc_to_product(
     product_id = str(raw_id) if raw_id is not None else None
     title = _to_clean_text(doc.get("title")) or _to_clean_text(doc.get("name"))
     categories = _resolve_mongo_category_names(doc, category_name_index or {})
-    description = _build_mongo_description(doc, categories)
+    description = _build_mongo_description(doc, categories, now=now)
     images = _resolve_mongo_images(
         doc,
         page_base_url=page_base_url,

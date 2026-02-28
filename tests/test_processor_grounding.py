@@ -6,7 +6,9 @@ os.environ.setdefault("DIRECTAM_BASE_URL", "https://directam.example.com")
 os.environ.setdefault("SERVICE_API_KEY", "test")
 
 from app.services.processor import (
+    _build_contextual_reply,
     _allowed_price_values,
+    _looks_like_generic_assistant_reply,
     _looks_like_image_blind_reply,
     _remember_user_context,
     _reply_has_ungrounded_price,
@@ -52,3 +54,23 @@ def test_allowed_price_values_collects_product_and_selected_prices() -> None:
 def test_detects_image_blind_replies() -> None:
     assert _looks_like_image_blind_reply("متاسفانه نمی‌توانم تصویر را ببینم.") is True
     assert _looks_like_image_blind_reply("این مدل موجوده و قیمتش مشخصه.") is False
+
+
+def test_detects_generic_assistant_replies() -> None:
+    assert _looks_like_generic_assistant_reply("سلام! چطور می‌توانم به شما کمک کنم؟") is True
+    assert _looks_like_generic_assistant_reply("این مدل موجوده و کارت محصولش رو می‌فرستم.") is False
+
+
+def test_contextual_reply_uses_product_context() -> None:
+    user = SimpleNamespace(username="ali_test", is_vip=False)
+    product = SimpleNamespace(title="کفش اسپرت نایک", slug="nike-run", price=890000)
+    reply = _build_contextual_reply(
+        user=user,
+        query_text="کفش اسپرت میخوام",
+        analysis_text="",
+        matched_products=[product],
+        wants_products=False,
+        needs_details=True,
+    )
+    assert "کفش اسپرت نایک" in reply
+    assert "890,000" in reply

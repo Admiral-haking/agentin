@@ -38,6 +38,21 @@ def _coerce_str(value: Any) -> str:
     return str(value).strip()
 
 
+def _coerce_str_list(value: Any, limit: int = 8) -> list[str]:
+    items: list[str] = []
+    if isinstance(value, str):
+        parts = [part.strip() for part in value.split(",")]
+        for part in parts:
+            if part and part.lower() != "unknown" and part not in items:
+                items.append(part)
+    elif isinstance(value, list):
+        for entry in value:
+            text = _coerce_str(entry)
+            if text and text.lower() != "unknown" and text not in items:
+                items.append(text)
+    return items[:limit]
+
+
 def _parse_json_response(content: str) -> dict[str, Any] | None:
     if not content:
         return None
@@ -57,12 +72,13 @@ def _parse_json_response(content: str) -> dict[str, Any] | None:
     return None
 
 
-def _build_analysis_text(summary: str, attrs: dict[str, str]) -> str:
+def _build_analysis_text(summary: str, attrs: dict[str, str], search_terms: list[str]) -> str:
     parts = [summary]
     for key in ("category", "gender", "style", "material", "color", "brand"):
         value = attrs.get(key)
         if value:
             parts.append(value)
+    parts.extend(search_terms[:6])
     return " ".join(part for part in parts if part).strip()
 
 
@@ -76,9 +92,12 @@ async def analyze_image_url(url: str, text_hint: str | None = None) -> dict[str,
         return None
 
     system_prompt = (
-        "You analyze ecommerce product images. Reply with JSON only:\n"
-        "{summary, category, gender, style, material, color, brand, notes}.\n"
-        "Use short Persian summary. Use 'unknown' when unsure."
+        "Analyze ecommerce product images for product search.\n"
+        "Reply with JSON only and this exact schema:\n"
+        "{summary, category, gender, style, material, color, brand, notes, search_terms}.\n"
+        "- summary: short Persian description.\n"
+        "- search_terms: array of 3-8 short terms useful for finding this product in catalog.\n"
+        "- Use 'unknown' when unsure. No markdown."
     )
     user_text = "Describe the product in the image in Persian."
     if text_hint:
@@ -124,6 +143,7 @@ async def analyze_image_url(url: str, text_hint: str | None = None) -> dict[str,
     attrs: dict[str, str] = {}
     summary = ""
     notes = ""
+    search_terms: list[str] = []
     if parsed:
         summary = _coerce_str(parsed.get("summary"))
         notes = _coerce_str(parsed.get("notes"))
@@ -131,16 +151,18 @@ async def analyze_image_url(url: str, text_hint: str | None = None) -> dict[str,
             value = _coerce_str(parsed.get(key))
             if value and value.lower() != "unknown":
                 attrs[key] = value
+        search_terms = _coerce_str_list(parsed.get("search_terms"))
     else:
         summary = _coerce_str(content)
 
-    analysis_text = _build_analysis_text(summary, attrs)
+    analysis_text = _build_analysis_text(summary, attrs, search_terms)
     tags = infer_tags(analysis_text)
 
     return {
         "summary": summary,
         "attributes": attrs,
         "notes": notes,
+        "search_terms": search_terms,
         "analysis_text": analysis_text,
         "tags": {
             "categories": list(tags.categories),

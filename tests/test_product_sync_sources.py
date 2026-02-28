@@ -77,6 +77,10 @@ def test_mongo_doc_to_product_maps_title_description_and_images() -> None:
                 "active": True,
                 "price": {"amount": 780000},
                 "inventory": {"quantity": 5},
+                "attributeValues": [
+                    {"key": "size", "value": "38"},
+                    {"key": "color", "value": {"name": "مشکی", "key": "black"}},
+                ],
                 "mediaIds": [media_id],
             }
         ],
@@ -95,3 +99,5 @@ def test_mongo_doc_to_product_maps_title_description_and_images() -> None:
     assert mapped.description is not None
     assert "برند: قلب دوم" in mapped.description
     assert "دسته‌بندی: کفش" in mapped.description
+    assert "وضعیت واریانت" in mapped.description
+    assert "سایزهای واریانت: 38" in mapped.description

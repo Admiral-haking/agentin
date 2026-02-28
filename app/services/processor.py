@@ -32,7 +32,6 @@ from app.services.guardrails import (
     build_branches_plan,
     build_contact_plan,
     build_decline_response,
-    build_greeting_response,
     build_goodbye_response,
     build_hours_response,
     build_phone_response,
@@ -43,7 +42,6 @@ from app.services.guardrails import (
     build_website_plan,
     format_outbound_text,
     fallback_for_message_type,
-    fallback_llm_text,
     is_decline,
     is_goodbye,
     is_greeting,
@@ -184,6 +182,10 @@ PRICE_VALUE_RE = re.compile(r"(?<!\d)\d{3,}(?:[,\u066C]\d{3})*(?!\d)")
 PRICE_HINT_RE = re.compile(r"(قیمت|تومان|تومن|ریال|price)", re.IGNORECASE)
 IMAGE_BLIND_REPLY_RE = re.compile(
     r"(نمی.?توانم|نمی.?تونم|متوجه نمی.?شم|can't|cannot).{0,24}(تصویر|عکس|image|photo)",
+    re.IGNORECASE,
+)
+GENERIC_ASSISTANT_REPLY_RE = re.compile(
+    r"(چطور می.?توانم.*کمک|سوالی درباره محصولات|به نظر می.?رسد که شما (عکسی|تصویری) ارسال کرده.?اید|برای معرفی دقیق.?تر)",
     re.IGNORECASE,
 )
 
@@ -392,6 +394,87 @@ def _looks_like_image_blind_reply(text: str | None) -> bool:
     if not normalized:
         return False
     return bool(IMAGE_BLIND_REPLY_RE.search(normalized))
+
+
+def _looks_like_generic_assistant_reply(text: str | None) -> bool:
+    if not text:
+        return False
+    normalized = " ".join(text.split())
+    if len(normalized) < 24:
+        return False
+    return bool(GENERIC_ASSISTANT_REPLY_RE.search(normalized))
+
+
+def _display_name(user: User | None) -> str | None:
+    if not user or not user.username:
+        return None
+    cleaned = user.username.strip().lstrip("@")
+    if not cleaned:
+        return None
+    if "_" in cleaned:
+        cleaned = cleaned.split("_", 1)[0].strip()
+    if "." in cleaned and len(cleaned) > 10:
+        cleaned = cleaned.split(".", 1)[0].strip()
+    if not cleaned:
+        return None
+    return cleaned[:18]
+
+
+def _format_price_label(value: int | None) -> str:
+    if isinstance(value, int) and value > 0:
+        return f"{value:,} تومان"
+    return "قیمت نامشخص"
+
+
+def _build_contextual_reply(
+    *,
+    user: User | None,
+    query_text: str | None,
+    analysis_text: str | None,
+    matched_products: list[Product] | None,
+    wants_products: bool,
+    needs_details: bool,
+) -> str:
+    name = _display_name(user)
+    prefix = f"{name} جان، " if name else ""
+    products = matched_products or []
+    if products:
+        top = products[0]
+        title = (top.title or top.slug or "این مدل").strip()
+        price_text = _format_price_label(top.price)
+        if wants_products or len(products) > 1:
+            return (
+                f"{prefix}چند گزینه نزدیک پیدا شد و الان کارت محصولات رو می‌فرستم. "
+                "اگه سایز/رنگ دقیق بدی، فیلترش می‌کنم."
+            )
+        if needs_details:
+            return f"{prefix}{title} موجوده ({price_text}). سایز یا رنگ مدنظرتون رو بگید تا دقیق‌تر چک کنم."
+        return f"{prefix}{title} موجوده ({price_text}). اگر مدل مشابه می‌خواید بگید تا چند گزینه دیگه هم بفرستم."
+    if analysis_text:
+        summary = " ".join(analysis_text.split())
+        if len(summary) > 100:
+            summary = summary[:100].rstrip() + "..."
+        return (
+            f"{prefix}عکس رو بررسی کردم ({summary}). "
+            "برای اعلام قیمت دقیق، لطفاً سایز یا رنگ مدنظرتون رو هم بفرستید."
+        )
+    normalized_query = " ".join((query_text or "").split())
+    if normalized_query:
+        return (
+            f"{prefix}برای پیشنهاد دقیق، لطفاً یکی از این‌ها رو مشخص کنید: "
+            "مدل، بازه قیمت، یا رنگ/سایز مدنظر."
+        )
+    return (
+        f"{prefix}برای راهنمایی دقیق‌تر، اسم مدل یا عکس محصول رو بفرستید تا از روی موجودی سایت پیشنهاد بدم."
+    )
+
+
+def _build_personalized_greeting(user: User | None) -> str:
+    name = _display_name(user)
+    salutation = f"سلام {name} جان 🌷" if name else "سلام 🌷"
+    if user and user.is_vip:
+        return f"{salutation} خوش اومدی. برای انتخاب سریع، بگو دنبال چه مدل یا بازه قیمتی هستی؟"
+    return f"{salutation} خوش اومدی به قلب دوم. دنبال چه مدل یا دسته‌ای هستی؟"
 
 
 def _remember_user_context(
@@ -1201,12 +1284,12 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     return
 
             analysis_text = ""
+            analysis_terms_text = ""
             analysis_payload: dict[str, Any] | None = None
             if (
                 not normalized.is_admin
                 and normalized.media_url
                 and is_likely_image_url(normalized.media_url)
-                and (not normalized.text or _is_low_signal(normalized.text))
             ):
                 analysis = await analyze_image_url(
                     normalized.media_url,
@@ -1218,6 +1301,15 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         or analysis.get("summary")
                         or ""
                     )
+                    terms = analysis.get("search_terms")
+                    if isinstance(terms, list):
+                        clean_terms = [
+                            str(term).strip()
+                            for term in terms
+                            if isinstance(term, str) and str(term).strip()
+                        ]
+                        if clean_terms:
+                            analysis_terms_text = " ".join(clean_terms[:8])
                     analysis_payload = analysis
                     payload = record.payload_json or {}
                     payload["media_analysis"] = analysis
@@ -1287,7 +1379,9 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
 
             llm_first_all = settings.LLM_FIRST_ALL
             intent_text = (merged_text or normalized.text or "").strip()
-            query_text = " ".join(part for part in [intent_text, analysis_text] if part).strip()
+            query_text = " ".join(
+                part for part in [intent_text, analysis_text, analysis_terms_text] if part
+            ).strip()
             lowered = intent_text.lower()
             behavior_input = intent_text or analysis_text
             conversation_state_payload: dict[str, Any] | None = None
@@ -1621,7 +1715,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     session,
                     conversation.id,
                     normalized.sender_id,
-                    OutboundPlan(type="text", text=build_greeting_response()),
+                    OutboundPlan(type="text", text=_build_personalized_greeting(user)),
                     meta=_merge_meta({
                         "source": "guardrails",
                         "intent": "greeting",
@@ -1867,7 +1961,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         session,
                         conversation.id,
                         normalized.sender_id,
-                        "سلام! چطور می‌تونم کمکتون کنم؟",
+                        _build_personalized_greeting(user),
                         meta=_merge_meta({"source": "guardrails", "intent": "greeting"}),
                     )
                     return
@@ -2074,6 +2168,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             query_tags = infer_tags(query_text)
             wants_products = wants_product_list(query_text)
             needs_details = needs_product_details(query_text)
+            visual_product_intent = bool(normalized.media_url and analysis_text)
             store_intent = store_info_intent or is_greeting(lowered)
             product_intent = wants_product_intent(query_text)
             if store_intent or support_intent:
@@ -2081,6 +2176,8 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             if selected_product_state:
                 product_intent = True
                 needs_details = False
+            elif visual_product_intent:
+                product_intent = True
             elif (
                 query_tags.categories
                 or query_tags.genders
@@ -2093,6 +2190,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 product_intent
                 or wants_products
                 or needs_details
+                or visual_product_intent
                 or query_tags.categories
                 or query_tags.genders
                 or query_tags.materials
@@ -2118,6 +2216,20 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             if product_from_url:
                 matched_products_for_llm = [product_from_url]
                 matched_products = [product_from_url]
+            if should_match_products and not matched_products_for_llm and analysis_text:
+                visual_matches = await match_products_with_scores(
+                    session,
+                    analysis_text,
+                    limit=max(
+                        settings.LLM_PRODUCT_CONTEXT_LIMIT,
+                        settings.PRODUCT_MATCH_LIMIT,
+                    ),
+                )
+                if visual_matches:
+                    matches_for_context = visual_matches
+                    match_debug = _build_match_debug(matches_for_context)
+                    matched_products_for_llm = [match.product for match in matches_for_context]
+                    matched_products = matched_products_for_llm[: settings.PRODUCT_MATCH_LIMIT]
             more_results_available = len(matched_products_for_llm) > len(matched_products)
 
             is_plain_list_request = wants_products and not (
@@ -2529,6 +2641,15 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                                 tag_bits.append(f"{key}={', '.join(str(v) for v in values)}")
                         if tag_bits:
                             detail_lines.append("برچسب‌ها: " + " | ".join(tag_bits))
+                    search_terms = analysis_payload.get("search_terms")
+                    if isinstance(search_terms, list):
+                        term_bits = [
+                            str(term).strip()
+                            for term in search_terms
+                            if isinstance(term, str) and str(term).strip()
+                        ]
+                        if term_bits:
+                            detail_lines.append("کلیدواژه‌ها: " + " | ".join(term_bits[:8]))
                 system_notes.append("[IMAGE_ANALYSIS]\n" + "\n".join(detail_lines))
             if order_hint_text:
                 system_notes.append(
@@ -2546,7 +2667,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 matched_products
                 and not low_confidence_block
                 and not order_hint_text
-                and (product_intent or wants_products or needs_details)
+                and (product_intent or wants_products or needs_details or visual_product_intent)
             )
             llm_messages = build_llm_messages(
                 history,
@@ -2620,7 +2741,14 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 fallback_text = (
                     bot_settings.fallback_text
                     if bot_settings and bot_settings.fallback_text
-                    else fallback_llm_text()
+                    else _build_contextual_reply(
+                        user=user,
+                        query_text=query_text,
+                        analysis_text=analysis_text,
+                        matched_products=matched_products,
+                        wants_products=wants_products,
+                        needs_details=needs_details,
+                    )
                 )
                 reply_text = post_process(reply_text, max_chars=max_chars, fallback_text=fallback_text)
                 await record_usage(session, usage, provider_used)
@@ -2642,7 +2770,14 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 reply_text = (
                     bot_settings.fallback_text
                     if bot_settings and bot_settings.fallback_text
-                    else fallback_llm_text()
+                    else _build_contextual_reply(
+                        user=user,
+                        query_text=query_text,
+                        analysis_text=analysis_text,
+                        matched_products=matched_products,
+                        wants_products=wants_products,
+                        needs_details=needs_details,
+                    )
                 )
 
             show_products = False
@@ -2653,6 +2788,13 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
             if allow_product_cards and token_requested:
                 show_products = True
             if allow_product_cards and llm_first_all and auto_show_products and not show_products:
+                show_products = True
+            if (
+                allow_product_cards
+                and matched_products
+                and not show_products
+                and (visual_product_intent or wants_products or product_intent or needs_details)
+            ):
                 show_products = True
 
             if order_hint_text:
@@ -2709,8 +2851,17 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 reply_text = "چند پیشنهاد مرتبط برات آماده کردم:"
 
             if not reply_text:
-                reply_text = fallback_llm_text(
-                    bot_settings.fallback_text if bot_settings else None
+                reply_text = (
+                    bot_settings.fallback_text
+                    if bot_settings and bot_settings.fallback_text
+                    else _build_contextual_reply(
+                        user=user,
+                        query_text=query_text,
+                        analysis_text=analysis_text,
+                        matched_products=matched_products,
+                        wants_products=wants_products,
+                        needs_details=needs_details,
+                    )
                 )
 
             if reply_text:
@@ -2733,6 +2884,17 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         show_products = True
                     else:
                         reply_text = "تصویر دریافت شد. برای اعلام دقیق قیمت و موجودی، اسم مدل یا رنگ مدنظرتون رو بفرستید."
+                if _looks_like_generic_assistant_reply(reply_text):
+                    reply_text = _build_contextual_reply(
+                        user=user,
+                        query_text=query_text,
+                        analysis_text=analysis_text,
+                        matched_products=matched_products,
+                        wants_products=wants_products,
+                        needs_details=needs_details,
+                    )
+                    if allow_product_cards and matched_products:
+                        show_products = True
                 if last_assistant_text and _is_repetitive_reply(reply_text, last_assistant_text):
                     loop_payload = await _touch_state(
                         state.intent or "unknown",
