@@ -16,6 +16,9 @@ import PsychologyRoundedIcon from '@mui/icons-material/PsychologyRounded';
 import TextSnippetRoundedIcon from '@mui/icons-material/TextSnippetRounded';
 import SupportAgentRoundedIcon from '@mui/icons-material/SupportAgentRounded';
 import ScheduleRoundedIcon from '@mui/icons-material/ScheduleRounded';
+import MonitorHeartRoundedIcon from '@mui/icons-material/MonitorHeartRounded';
+
+const productsEnabled = (import.meta.env.VITE_PRODUCTS_ENABLED || 'false') === 'true';
 
 export const AppMenu = () => {
   const { permissions } = usePermissions();
@@ -35,6 +38,7 @@ export const AppMenu = () => {
         <MenuItemLink to="/followups" primaryText="پیگیری‌ها" leftIcon={<ScheduleRoundedIcon />} />
       )}
       <MenuItemLink to="/logs" primaryText="لاگ‌ها" leftIcon={<AnalyticsRoundedIcon />} />
+      <MenuItemLink to="/quality" primaryText="کیفیت مکالمه" leftIcon={<MonitorHeartRoundedIcon />} />
       <MenuItemLink to="/assistant" primaryText="دستیار هوشمند" leftIcon={<AutoAwesomeRoundedIcon />} />
       <MenuItemLink to="/directam" primaryText="کنسول دایرکتم" leftIcon={<SendRoundedIcon />} />
       {permissions === 'admin' && (
@@ -47,7 +51,7 @@ export const AppMenu = () => {
       </ListSubheader>
       <MenuItemLink to="/campaigns" primaryText="کمپین‌ها" leftIcon={<CampaignRoundedIcon />} />
       <MenuItemLink to="/faqs" primaryText="سوالات متداول" leftIcon={<QuizRoundedIcon />} />
-      {permissions === 'admin' && (
+      {permissions === 'admin' && productsEnabled && (
         <MenuItemLink to="/products" primaryText="محصولات" leftIcon={<Inventory2RoundedIcon />} />
       )}
       {permissions === 'admin' && (

@@ -34,6 +34,7 @@ import { HealthPage } from './pages/HealthPage';
 import { UserBehaviorPage } from './pages/UserBehaviorPage';
 import { AiContextPage } from './pages/AiContextPage';
 import { LoginPage } from './pages/LoginPage';
+import { ConversationQualityPage } from './pages/ConversationQualityPage';
 
 const productsEnabled = (import.meta.env.VITE_PRODUCTS_ENABLED || 'false') === 'true';
 
@@ -56,6 +57,7 @@ export const App = () => (
           <Route path="/health" element={<HealthPage />} />
           <Route path="/behavior" element={<UserBehaviorPage />} />
           <Route path="/ai-context" element={<AiContextPage />} />
+          <Route path="/quality" element={<ConversationQualityPage />} />
         </CustomRoutes>
         <Resource
           name="campaigns"

@@ -80,6 +80,11 @@ from app.services.admin_media_notes import (
     format_admin_media_notes,
     get_recent_admin_media_notes,
 )
+from app.services.admin_policy_memory import (
+    format_admin_policy_memory,
+    get_admin_policy_memory,
+    store_admin_policy_memory,
+)
 from app.services.product_catalog import get_catalog_snapshot
 from app.services.behavior_analyzer import (
     analyze_user_behavior,
@@ -1250,6 +1255,16 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                         },
                     )
                     await session.commit()
+                if normalized.text and normalized.text.strip():
+                    stored_policy = await store_admin_policy_memory(
+                        session,
+                        text=normalized.text,
+                        source="admin_webhook",
+                        conversation_id=conversation.id,
+                        message_id=record.id,
+                    )
+                    if stored_policy:
+                        await session.commit()
 
             if role == "user" and normalized.message_type != "read":
                 await cancel_followups_for_conversation(
@@ -2612,6 +2627,7 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                 faqs = await get_verified_faqs(session)
 
             campaigns = await get_active_campaigns(session)
+            policy_memory_items = await get_admin_policy_memory(session, limit=10)
             llm_products = matched_products_for_llm if should_match_products else []
             response_logs = await get_recent_response_logs(
                 session,
@@ -2662,6 +2678,13 @@ async def handle_webhook(payload: dict[str, Any]) -> None:
                     "[NEED_DETAILS]\n"
                     f"اعتماد پایین است. قبل از پیشنهاد محصول این سؤال را بپرس:\n{required_question_text}\n"
                     "تا جزئیات کامل نشده، محصول پیشنهاد نده."
+                )
+            policy_memory_text = format_admin_policy_memory(policy_memory_items)
+            if policy_memory_text:
+                system_notes.append(
+                    "[ADMIN_POLICY_MEMORY - HIGH PRIORITY]\n"
+                    f"{policy_memory_text}\n"
+                    "قانون اجرایی: اگر پاسخ با این سیاست‌ها تضاد داشت، مطابق همین سیاست‌ها پاسخ بده."
                 )
             allow_product_cards = bool(
                 matched_products
